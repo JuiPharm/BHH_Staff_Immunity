@@ -218,6 +218,9 @@ export const AUDIT_DATABASE_CONFIG: DatabaseConfig = {
 export function setupAllDatabases(): void {
   const props = PropertiesService.getScriptProperties();
 
+  // Force Security DB to use user-specified Sheet ID
+  props.setProperty('DB_SECURITY_SPREADSHEET_ID', '1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8');
+
   [CLINICAL_DATABASE_CONFIG, SECURITY_DATABASE_CONFIG, AUDIT_DATABASE_CONFIG].forEach((config) => {
     let ss: GoogleAppsScript.Spreadsheet.Spreadsheet;
     const existingId = props.getProperty(config.propertyKey);

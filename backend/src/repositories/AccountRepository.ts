@@ -25,7 +25,10 @@ export class AccountRepository {
   private sheetRepo: SheetRepository;
 
   constructor(sheetRepo?: SheetRepository) {
-    this.sheetRepo = sheetRepo || new SheetRepository();
+    const securitySsId = typeof PropertiesService !== 'undefined' 
+      ? PropertiesService.getScriptProperties().getProperty('DB_SECURITY_SPREADSHEET_ID') 
+      : null;
+    this.sheetRepo = sheetRepo || new SheetRepository(securitySsId || '1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8');
   }
 
   /**

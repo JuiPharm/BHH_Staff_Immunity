@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Dialog, DialogTitle, DialogContent, DialogActions, Button, Typography, Box, Alert } from '@mui/material';
+import { Dialog, DialogTitle, DialogContent, DialogActions, Button, Typography, Box, Alert, CircularProgress, LinearProgress } from '@mui/material';
 import { UploadCloud } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { bdmsColors } from '../../theme/bdmsTheme';
+import { apiService } from '../../services/api';
 
 interface ImportModalProps {
   open: boolean;
@@ -13,6 +14,7 @@ interface ImportModalProps {
 export const ImportModal: React.FC<ImportModalProps> = ({ open, onClose, onImportSuccess }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -26,20 +28,34 @@ export const ImportModal: React.FC<ImportModalProps> = ({ open, onClose, onImpor
   const handleImport = async () => {
     if (!selectedFile) return;
     setLoading(true);
+    setProgress(0);
 
     try {
       const data = await selectedFile.arrayBuffer();
       const workbook = XLSX.read(data);
       const firstSheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[firstSheetName];
-      const json = XLSX.utils.sheet_to_json(worksheet);
+      const json: any[] = XLSX.utils.sheet_to_json(worksheet);
+
+      let successCount = 0;
+      for (let i = 0; i < json.length; i++) {
+        // Prepare row data matching backend expected fields
+        const row = json[i];
+        const res = await apiService.createStaff(row);
+        if (res.success) {
+          successCount++;
+        } else {
+          console.error('Failed to import row', row, res.error);
+        }
+        setProgress(Math.round(((i + 1) / json.length) * 100));
+      }
 
       setLoading(false);
-      onImportSuccess(json.length);
+      onImportSuccess(successCount);
       onClose();
     } catch (err: any) {
       setLoading(false);
-      setError('ไม่สามารถอ่านไฟล์ XLSX/CSV ได้ กรุณาตรวจสอบรูปแบบตารางข้อมูล');
+      setError('ไม่สามารถอ่านไฟล์ XLSX/CSV ได้ หรือเกิดข้อผิดพลาดในการส่งข้อมูล');
     }
   };
 
@@ -66,11 +82,23 @@ export const ImportModal: React.FC<ImportModalProps> = ({ open, onClose, onImpor
           }}
           component="label"
         >
-          <input type="file" hidden onChange={handleFileChange} accept=".xlsx,.csv" />
-          <UploadCloud size={32} color={bdmsColors.navy} />
-          <Typography variant="body2" sx={{ fontWeight: 600, color: bdmsColors.navy, mt: 1 }}>
-            {selectedFile ? selectedFile.name : 'คลิกเพื่อเลือกไฟล์ (Staff_Master.xlsx)'}
-          </Typography>
+          {loading ? (
+            <Box sx={{ mt: 2 }}>
+              <CircularProgress size={40} sx={{ color: bdmsColors.navy, mb: 1 }} />
+              <Typography variant="body2" sx={{ fontWeight: 600, color: bdmsColors.navy }}>
+                กำลังนำเข้าข้อมูล... {progress}%
+              </Typography>
+              <LinearProgress variant="determinate" value={progress} sx={{ mt: 2, height: 8, borderRadius: 4 }} />
+            </Box>
+          ) : (
+            <>
+              <input type="file" hidden onChange={handleFileChange} accept=".xlsx,.csv" />
+              <UploadCloud size={32} color={bdmsColors.navy} />
+              <Typography variant="body2" sx={{ fontWeight: 600, color: bdmsColors.navy, mt: 1 }}>
+                {selectedFile ? selectedFile.name : 'คลิกเพื่อเลือกไฟล์ (Staff_Master.xlsx)'}
+              </Typography>
+            </>
+          )}
         </Box>
       </DialogContent>
       <DialogActions sx={{ p: 2.5 }}>
@@ -78,7 +106,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({ open, onClose, onImpor
           ยกเลิก
         </Button>
         <Button onClick={handleImport} variant="contained" color="primary" disabled={!selectedFile || loading}>
-          เริ่มการนำเข้าข้อมูล
+          {loading ? 'กำลังทำงาน...' : 'เริ่มการนำเข้าข้อมูล'}
         </Button>
       </DialogActions>
     </Dialog>

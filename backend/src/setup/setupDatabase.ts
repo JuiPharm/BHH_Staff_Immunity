@@ -1,3 +1,5 @@
+import { PasswordService } from '../services/PasswordService';
+
 /**
  * Setup Database Script for Staff Immunity & Health Registry
  * Creates 3 Spreadsheets and 22 Sheets with Header Rows, Migration Version, and System Constant Seeds.
@@ -256,6 +258,9 @@ export function setupAllDatabases(): void {
 
   // Seed 5 Sample Staff for Testing
   seedSampleData();
+  
+  // Seed User Accounts with properly hashed passwords
+  seedUserAccounts();
 }
 
 /**
@@ -330,5 +335,39 @@ function seedSampleData(): void {
     ];
 
     sampleStaff.forEach(row => staffSheet.appendRow(row));
+  }
+}
+
+/**
+ * Seeds User Accounts for Testing
+ */
+function seedUserAccounts(): void {
+  const props = PropertiesService.getScriptProperties();
+  const securitySsId = props.getProperty(SECURITY_DATABASE_CONFIG.propertyKey);
+  if (!securitySsId) return;
+
+  const ss = SpreadsheetApp.openById(securitySsId);
+  const userSheet = ss.getSheetByName('USER_ACCOUNT');
+  if (!userSheet) return;
+
+  // Add only if the sheet is empty (only header exists)
+  if (userSheet.getLastRow() === 1) {
+    const now = new Date().toISOString();
+    
+    const staffIds = ['ST8004', 'ST8005', 'ST8006', 'ST8007', 'ST8008', 'IC8001', 'HR8002', 'MD8003'];
+    
+    staffIds.forEach((staffId, index) => {
+      // Use 10,000 iterations for testing instead of 100,000 to save GAS execution time during setup
+      const { hash, salt, iterations } = PasswordService.hashPassword('password123', undefined, 10000);
+      const userUuid = `user-00${index + 1}`;
+      
+      const userRow = [
+        userUuid, staffId, hash, salt, iterations,
+        0, '', false, 'ACTIVE',
+        now, 'SYSTEM', now, 'SYSTEM', 1, false
+      ];
+      
+      userSheet.appendRow(userRow);
+    });
   }
 }

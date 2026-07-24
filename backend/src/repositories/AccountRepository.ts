@@ -154,4 +154,58 @@ export class AccountRepository {
       user.RecordVersion
     );
   }
+
+  /**
+   * Creates a new user account with a hashed password.
+   */
+  public createAccount(staffId: string, plainPassword: string, createdBy: string): void {
+    const existing = this.findByStaffId(staffId);
+    if (existing) return; // Account already exists
+
+    const { hash, salt, iterations } = PasswordService.hashPassword(plainPassword);
+    const now = new Date().toISOString();
+    const userUuid = `usr-${Utilities.getUuid()}`;
+
+    this.sheetRepo.appendRow(
+      'USER_ACCOUNT',
+      [
+        'UserUUID',
+        'StaffID',
+        'PasswordHash',
+        'Salt',
+        'Iterations',
+        'FailedLoginCount',
+        'LockoutUntil',
+        'MustChangePassword',
+        'AccountStatus',
+        'ResetTokenHash',
+        'ResetTokenExpiresAt',
+        'CreatedAt',
+        'CreatedBy',
+        'UpdatedAt',
+        'UpdatedBy',
+        'RecordVersion',
+        'IsDeleted'
+      ],
+      {
+        UserUUID: userUuid,
+        StaffID: staffId,
+        PasswordHash: hash,
+        Salt: salt,
+        Iterations: iterations,
+        FailedLoginCount: 0,
+        LockoutUntil: '',
+        MustChangePassword: true, // Force password change on first login
+        AccountStatus: 'ACTIVE',
+        ResetTokenHash: '',
+        ResetTokenExpiresAt: '',
+        CreatedAt: now,
+        CreatedBy: createdBy,
+        UpdatedAt: now,
+        UpdatedBy: createdBy,
+        RecordVersion: 1,
+        IsDeleted: false
+      }
+    );
+  }
 }

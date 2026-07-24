@@ -19,8 +19,8 @@ var GASApp = (() => {
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
   // src/index.ts
-  var src_exports = {};
-  __export(src_exports, {
+  var index_exports = {};
+  __export(index_exports, {
     cronAuditChainScan: () => cronAuditChainScan,
     cronDailyMailQueue: () => cronDailyMailQueue,
     cronRecalculateDashboardCache: () => cronRecalculateDashboardCache,
@@ -57,7 +57,7 @@ var GASApp = (() => {
   };
 
   // src/services/CryptoService.ts
-  var CryptoService = class {
+  var CryptoService = class _CryptoService {
     /**
      * Generates a random cryptographic salt (hex string).
      */
@@ -98,14 +98,13 @@ var GASApp = (() => {
      */
     static computeAuditEntryHash(logUuid, timestamp, staffId, action, targetResource, detailsJson, previousHash) {
       const payload = `${logUuid}|${timestamp}|${staffId}|${action}|${targetResource}|${detailsJson}|${previousHash}`;
-      return CryptoService.hashSha256(payload);
+      return _CryptoService.hashSha256(payload);
     }
     /**
      * Constant-time comparison to prevent timing attacks.
      */
     static constantTimeCompare(a, b) {
-      if (a.length !== b.length)
-        return false;
+      if (a.length !== b.length) return false;
       let result = 0;
       for (let i = 0; i < a.length; i++) {
         result |= a.charCodeAt(i) ^ b.charCodeAt(i);
@@ -115,14 +114,13 @@ var GASApp = (() => {
   };
 
   // src/utils/FormulaSanitizer.ts
-  var FormulaSanitizer = class {
+  var FormulaSanitizer = class _FormulaSanitizer {
     /**
      * Prevents Formula Injection vulnerability when writing user inputs into Google Sheets.
      * Prepends a single quote `'` if the cell text starts with '=', '+', '-', '@', '\t', '\r'.
      */
     static sanitize(value) {
-      if (typeof value !== "string")
-        return value;
+      if (typeof value !== "string") return value;
       const trimmed = value.trim();
       if (trimmed.startsWith("=") || trimmed.startsWith("+") || trimmed.startsWith("-") || trimmed.startsWith("@") || trimmed.startsWith("	") || trimmed.startsWith("\r")) {
         return `'${value}`;
@@ -130,7 +128,7 @@ var GASApp = (() => {
       return value;
     }
     static sanitizeRow(row) {
-      return row.map((cell) => FormulaSanitizer.sanitize(cell));
+      return row.map((cell) => _FormulaSanitizer.sanitize(cell));
     }
   };
 
@@ -166,11 +164,9 @@ var GASApp = (() => {
     getRows(sheetName) {
       const ss = this.getSpreadsheet();
       const sheet = ss.getSheetByName(sheetName);
-      if (!sheet)
-        return [];
+      if (!sheet) return [];
       const values = sheet.getDataRange().getValues();
-      if (values.length < 2)
-        return [];
+      if (values.length < 2) return [];
       const headers = values[0].map((h) => String(h).trim());
       const dataRows = values.slice(1);
       return dataRows.map((row) => {
@@ -207,16 +203,13 @@ var GASApp = (() => {
       return this.executeWithLock(() => {
         const ss = this.getSpreadsheet();
         const sheet = ss.getSheetByName(sheetName);
-        if (!sheet)
-          return false;
+        if (!sheet) return false;
         const values = sheet.getDataRange().getValues();
-        if (values.length < 2)
-          return false;
+        if (values.length < 2) return false;
         const headers = values[0].map((h) => String(h).trim());
         const keyColIndex = headers.indexOf(keyHeader);
         const versionColIndex = headers.indexOf("RecordVersion");
-        if (keyColIndex === -1)
-          return false;
+        if (keyColIndex === -1) return false;
         for (let r = 1; r < values.length; r++) {
           if (String(values[r][keyColIndex]) === String(keyValue)) {
             if (versionColIndex !== -1 && currentVersion !== void 0) {
@@ -241,7 +234,7 @@ var GASApp = (() => {
   };
 
   // src/services/PasswordService.ts
-  var _PasswordService = class {
+  var _PasswordService = class _PasswordService {
     /**
      * Hashes password using PBKDF2-HMAC-SHA256 with a unique random salt.
      * NEVER logs or stores plain-text password.
@@ -273,8 +266,8 @@ var GASApp = (() => {
       return { token, tokenHash };
     }
   };
+  _PasswordService.DEFAULT_ITERATIONS = 1e5;
   var PasswordService = _PasswordService;
-  PasswordService.DEFAULT_ITERATIONS = 1e5;
 
   // src/repositories/AccountRepository.ts
   var AccountRepository = class {
@@ -287,8 +280,7 @@ var GASApp = (() => {
     findByStaffId(staffId) {
       const rows = this.sheetRepo.getRows("USER_ACCOUNT");
       const user = rows.find((r) => String(r.StaffID).toUpperCase() === staffId.toUpperCase() && !r.IsDeleted);
-      if (!user)
-        return null;
+      if (!user) return null;
       return {
         UserUUID: String(user.UserUUID),
         StaffID: String(user.StaffID),
@@ -315,8 +307,7 @@ var GASApp = (() => {
     handleFailedLogin(staffId) {
       return this.sheetRepo.executeWithLock(() => {
         const user = this.findByStaffId(staffId);
-        if (!user)
-          return { failedCount: 0, isLocked: false };
+        if (!user) return { failedCount: 0, isLocked: false };
         const newFailedCount = user.FailedLoginCount + 1;
         let newStatus = user.AccountStatus;
         let lockoutUntil = user.LockoutUntil;
@@ -344,8 +335,7 @@ var GASApp = (() => {
      */
     resetFailedLogin(staffId) {
       const user = this.findByStaffId(staffId);
-      if (!user)
-        return;
+      if (!user) return;
       this.sheetRepo.updateRow(
         "USER_ACCOUNT",
         "StaffID",
@@ -364,8 +354,7 @@ var GASApp = (() => {
      */
     updatePassword(staffId, newHash, newSalt) {
       const user = this.findByStaffId(staffId);
-      if (!user)
-        return;
+      if (!user) return;
       this.sheetRepo.updateRow(
         "USER_ACCOUNT",
         "StaffID",
@@ -386,8 +375,7 @@ var GASApp = (() => {
      */
     setResetToken(staffId, tokenHash, expiresAt) {
       const user = this.findByStaffId(staffId);
-      if (!user)
-        return;
+      if (!user) return;
       this.sheetRepo.updateRow(
         "USER_ACCOUNT",
         "StaffID",
@@ -398,6 +386,58 @@ var GASApp = (() => {
           UpdatedAt: (/* @__PURE__ */ new Date()).toISOString()
         },
         user.RecordVersion
+      );
+    }
+    /**
+     * Creates a new user account with a hashed password.
+     */
+    createAccount(staffId, plainPassword, createdBy) {
+      const existing = this.findByStaffId(staffId);
+      if (existing) return;
+      const { hash, salt, iterations } = PasswordService.hashPassword(plainPassword);
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      const userUuid = `usr-${Utilities.getUuid()}`;
+      this.sheetRepo.appendRow(
+        "USER_ACCOUNT",
+        [
+          "UserUUID",
+          "StaffID",
+          "PasswordHash",
+          "Salt",
+          "Iterations",
+          "FailedLoginCount",
+          "LockoutUntil",
+          "MustChangePassword",
+          "AccountStatus",
+          "ResetTokenHash",
+          "ResetTokenExpiresAt",
+          "CreatedAt",
+          "CreatedBy",
+          "UpdatedAt",
+          "UpdatedBy",
+          "RecordVersion",
+          "IsDeleted"
+        ],
+        {
+          UserUUID: userUuid,
+          StaffID: staffId,
+          PasswordHash: hash,
+          Salt: salt,
+          Iterations: iterations,
+          FailedLoginCount: 0,
+          LockoutUntil: "",
+          MustChangePassword: true,
+          // Force password change on first login
+          AccountStatus: "ACTIVE",
+          ResetTokenHash: "",
+          ResetTokenExpiresAt: "",
+          CreatedAt: now,
+          CreatedBy: createdBy,
+          UpdatedAt: now,
+          UpdatedBy: createdBy,
+          RecordVersion: 1,
+          IsDeleted: false
+        }
       );
     }
   };
@@ -451,8 +491,7 @@ var GASApp = (() => {
     findByTokenHash(tokenHash) {
       const rows = this.sheetRepo.getRows("SESSION");
       const match = rows.find((r) => String(r.TokenHash) === tokenHash && !r.IsDeleted);
-      if (!match)
-        return null;
+      if (!match) return null;
       return {
         sessionUuid: String(match.SessionUUID),
         staffId: String(match.StaffID),
@@ -470,8 +509,7 @@ var GASApp = (() => {
      */
     revokeSession(tokenHash) {
       const session = this.findByTokenHash(tokenHash);
-      if (!session)
-        return;
+      if (!session) return;
       this.sheetRepo.updateRow(
         "SESSION",
         "TokenHash",
@@ -554,13 +592,11 @@ var GASApp = (() => {
      * Checks if session is valid (Not expired, not revoked).
      */
     static isValidSession(session) {
-      if (session.isRevoked)
-        return false;
+      if (session.isRevoked) return false;
       const now = (/* @__PURE__ */ new Date()).getTime();
       const idleTime = new Date(session.idleExpiresAt).getTime();
       const absoluteTime = new Date(session.absoluteExpiresAt).getTime();
-      if (now > idleTime || now > absoluteTime)
-        return false;
+      if (now > idleTime || now > absoluteTime) return false;
       return true;
     }
   };
@@ -575,8 +611,7 @@ var GASApp = (() => {
      */
     static isRateLimited(identifier) {
       const cache = CacheService.getScriptCache();
-      if (!cache)
-        return false;
+      if (!cache) return false;
       const attempts = Number(cache.get(`rate_${identifier}`) || "0");
       return attempts >= this.MAX_ATTEMPTS;
     }
@@ -585,8 +620,7 @@ var GASApp = (() => {
      */
     static incrementAttempts(identifier) {
       const cache = CacheService.getScriptCache();
-      if (!cache)
-        return 1;
+      if (!cache) return 1;
       const key = `rate_${identifier}`;
       const attempts = Number(cache.get(key) || "0") + 1;
       cache.put(key, String(attempts), this.LOCKOUT_SECONDS);
@@ -606,7 +640,7 @@ var GASApp = (() => {
   RateLimitService.LOCKOUT_SECONDS = 900;
 
   // src/controllers/AuthController.ts
-  var _AuthController = class {
+  var _AuthController = class _AuthController {
     constructor(accountRepo, sessionRepo) {
       this.accountRepo = accountRepo || new AccountRepository();
       this.sessionRepo = sessionRepo || new SessionRepository();
@@ -734,11 +768,11 @@ var GASApp = (() => {
       return ResponseHelper.success({ message: "\u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E23\u0E30\u0E1A\u0E1A\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08" }, requestId);
     }
   };
-  var AuthController = _AuthController;
   /**
    * Generic Error Message to prevent Account Enumeration.
    */
-  AuthController.GENERIC_AUTH_ERROR = "\u0E23\u0E2B\u0E31\u0E2A\u0E1E\u0E19\u0E31\u0E01\u0E07\u0E32\u0E19\u0E2B\u0E23\u0E37\u0E2D\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07";
+  _AuthController.GENERIC_AUTH_ERROR = "\u0E23\u0E2B\u0E31\u0E2A\u0E1E\u0E19\u0E31\u0E01\u0E07\u0E32\u0E19\u0E2B\u0E23\u0E37\u0E2D\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07";
+  var AuthController = _AuthController;
 
   // src/repositories/StaffRepository.ts
   var StaffRepository = class {
@@ -876,30 +910,18 @@ var GASApp = (() => {
           UpdatedAt: now,
           UpdatedBy: updatedBy
         };
-        if (dto.HN !== void 0)
-          updatedFields["HN"] = dto.HN;
-        if (dto.FirstName !== void 0)
-          updatedFields["FirstName"] = dto.FirstName;
-        if (dto.LastName !== void 0)
-          updatedFields["LastName"] = dto.LastName;
-        if (dto.DateOfBirth !== void 0)
-          updatedFields["DateOfBirth"] = dto.DateOfBirth;
-        if (dto.Sex !== void 0)
-          updatedFields["Gender"] = dto.Sex;
-        if (dto.BloodGroup !== void 0)
-          updatedFields["BloodGroup"] = dto.BloodGroup;
-        if (dto.Address !== void 0)
-          updatedFields["Address"] = dto.Address;
-        if (dto.EmergencyPhone !== void 0)
-          updatedFields["EmergencyPhone"] = dto.EmergencyPhone;
-        if (dto.Email !== void 0)
-          updatedFields["Email"] = dto.Email;
-        if (dto.DepartmentCode !== void 0)
-          updatedFields["Department"] = dto.DepartmentCode;
-        if (dto.WorkGroup !== void 0)
-          updatedFields["WorkGroup"] = dto.WorkGroup;
-        if (dto.EmploymentStatus !== void 0)
-          updatedFields["Status"] = dto.EmploymentStatus;
+        if (dto.HN !== void 0) updatedFields["HN"] = dto.HN;
+        if (dto.FirstName !== void 0) updatedFields["FirstName"] = dto.FirstName;
+        if (dto.LastName !== void 0) updatedFields["LastName"] = dto.LastName;
+        if (dto.DateOfBirth !== void 0) updatedFields["DateOfBirth"] = dto.DateOfBirth;
+        if (dto.Sex !== void 0) updatedFields["Gender"] = dto.Sex;
+        if (dto.BloodGroup !== void 0) updatedFields["BloodGroup"] = dto.BloodGroup;
+        if (dto.Address !== void 0) updatedFields["Address"] = dto.Address;
+        if (dto.EmergencyPhone !== void 0) updatedFields["EmergencyPhone"] = dto.EmergencyPhone;
+        if (dto.Email !== void 0) updatedFields["Email"] = dto.Email;
+        if (dto.DepartmentCode !== void 0) updatedFields["Department"] = dto.DepartmentCode;
+        if (dto.WorkGroup !== void 0) updatedFields["WorkGroup"] = dto.WorkGroup;
+        if (dto.EmploymentStatus !== void 0) updatedFields["Status"] = dto.EmploymentStatus;
         this.sheetRepo.updateRow("STAFF", "StaffID", staffId, updatedFields, existing.RecordVersion);
         return this.findByStaffId(staffId);
       });
@@ -910,8 +932,7 @@ var GASApp = (() => {
     softDeleteStaff(staffId, updatedBy) {
       return this.sheetRepo.executeWithLock(() => {
         const existing = this.findByStaffId(staffId, false);
-        if (!existing)
-          return false;
+        if (!existing) return false;
         const now = (/* @__PURE__ */ new Date()).toISOString();
         return this.sheetRepo.updateRow(
           "STAFF",
@@ -982,8 +1003,7 @@ var GASApp = (() => {
         if (keyword) {
           const kw = keyword.toLowerCase();
           const matchesKw = s.StaffID.toLowerCase().includes(kw) || s.FirstName.toLowerCase().includes(kw) || s.LastName.toLowerCase().includes(kw) || s.Email.toLowerCase().includes(kw) || s.DepartmentCode.toLowerCase().includes(kw);
-          if (!matchesKw)
-            return false;
+          if (!matchesKw) return false;
         }
         if (departmentCode && s.DepartmentCode.toUpperCase() !== departmentCode.toUpperCase()) {
           return false;
@@ -1106,12 +1126,10 @@ var GASApp = (() => {
     static logSensitiveMedicalView(userRole, userStaffId, targetStaffId) {
       try {
         const ssId = PropertiesService.getScriptProperties().getProperty("DB_AUDIT_SPREADSHEET_ID");
-        if (!ssId)
-          return;
+        if (!ssId) return;
         const ss = SpreadsheetApp.openById(ssId);
         const sheet = ss.getSheetByName("AUDIT_LOG");
-        if (!sheet)
-          return;
+        if (!sheet) return;
         const now = (/* @__PURE__ */ new Date()).toISOString();
         const logUuid = `log-${CryptoService.generateUuid()}`;
         const action = "SENSITIVE_RECORD_VIEW";
@@ -1477,26 +1495,18 @@ var GASApp = (() => {
   var ClinicalValidationSchema = class {
     static validateVaccination(dto) {
       const errors = [];
-      if (!dto.StaffID)
-        errors.push("StaffID is required");
-      if (!dto.VaccineCategory)
-        errors.push("VaccineCategory is required");
-      if (dto.DoseNumber === void 0 || dto.DoseNumber < 1)
-        errors.push("DoseNumber must be an integer >= 1");
-      if (!dto.AdministeredDate || !this.DATE_REGEX.test(dto.AdministeredDate))
-        errors.push("AdministeredDate format must be YYYY-MM-DD");
+      if (!dto.StaffID) errors.push("StaffID is required");
+      if (!dto.VaccineCategory) errors.push("VaccineCategory is required");
+      if (dto.DoseNumber === void 0 || dto.DoseNumber < 1) errors.push("DoseNumber must be an integer >= 1");
+      if (!dto.AdministeredDate || !this.DATE_REGEX.test(dto.AdministeredDate)) errors.push("AdministeredDate format must be YYYY-MM-DD");
       return { isValid: errors.length === 0, errors };
     }
     static validateLabResult(dto) {
       const errors = [];
-      if (!dto.StaffID)
-        errors.push("StaffID is required");
-      if (!dto.LabCategory)
-        errors.push("LabCategory is required");
-      if (!dto.QualitativeResult)
-        errors.push("QualitativeResult is required");
-      if (!dto.TestDate || !this.DATE_REGEX.test(dto.TestDate))
-        errors.push("TestDate format must be YYYY-MM-DD");
+      if (!dto.StaffID) errors.push("StaffID is required");
+      if (!dto.LabCategory) errors.push("LabCategory is required");
+      if (!dto.QualitativeResult) errors.push("QualitativeResult is required");
+      if (!dto.TestDate || !this.DATE_REGEX.test(dto.TestDate)) errors.push("TestDate format must be YYYY-MM-DD");
       return { isValid: errors.length === 0, errors };
     }
   };
@@ -2102,12 +2112,13 @@ var GASApp = (() => {
     });
     props.setProperty("SCHEMA_MIGRATION_VERSION", SCHEMA_MIGRATION_VERSION);
     seedSystemConstants();
+    seedSampleData();
+    seedUserAccounts();
   }
   function seedSystemConstants() {
     const props = PropertiesService.getScriptProperties();
     const auditSsId = props.getProperty(AUDIT_DATABASE_CONFIG.propertyKey);
-    if (!auditSsId)
-      return;
+    if (!auditSsId) return;
     const ss = SpreadsheetApp.openById(auditSsId);
     const ruleSheet = ss.getSheetByName("RULE");
     const auditSheet = ss.getSheetByName("AUDIT_LOG");
@@ -2141,6 +2152,59 @@ var GASApp = (() => {
       auditSheet.appendRow(genesisLog);
     }
   }
+  function seedSampleData() {
+    const props = PropertiesService.getScriptProperties();
+    const clinicalSsId = props.getProperty(CLINICAL_DATABASE_CONFIG.propertyKey);
+    if (!clinicalSsId) return;
+    const ss = SpreadsheetApp.openById(clinicalSsId);
+    const staffSheet = ss.getSheetByName("STAFF");
+    if (!staffSheet) return;
+    if (staffSheet.getLastRow() === 1) {
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      const sampleStaff = [
+        ["ST8004", "HN908234", "\u0E2D\u0E32\u0E23\u0E35\u0E22\u0E32", "\u0E23\u0E31\u0E01\u0E29\u0E4C\u0E14\u0E35", "1992-05-14", "FEMALE", "O+", "\u0E41\u0E1C\u0E19\u0E01\u0E1C\u0E39\u0E49\u0E1B\u0E48\u0E27\u0E22\u0E19\u0E2D\u0E01 (OPD)", "FRONTLINE", "areeya.ra@bdms.co.th", "081-234-5678", "\u0E04\u0E38\u0E13\u0E2A\u0E21\u0E28\u0E31\u0E01\u0E14\u0E34\u0E4C \u0E23\u0E31\u0E01\u0E29\u0E4C\u0E14\u0E35", "089-876-5432", "ACTIVE", now, "SYSTEM", now, "SYSTEM", 1, false],
+        ["ST8005", "HN908235", "\u0E01\u0E34\u0E15\u0E15\u0E34\u0E28\u0E31\u0E01\u0E14\u0E34\u0E4C", "\u0E21\u0E38\u0E48\u0E07\u0E21\u0E31\u0E48\u0E19", "1988-11-20", "MALE", "B+", "\u0E2B\u0E49\u0E2D\u0E07\u0E04\u0E25\u0E31\u0E07\u0E22\u0E32 (Pharmacy)", "CLINICAL", "kittisak.mu@bdms.co.th", "082-345-6789", "\u0E04\u0E38\u0E13\u0E40\u0E1E\u0E47\u0E0D\u0E28\u0E23\u0E35 \u0E21\u0E38\u0E48\u0E07\u0E21\u0E31\u0E48\u0E19", "088-765-4321", "ACTIVE", now, "SYSTEM", now, "SYSTEM", 1, false],
+        ["ST8006", "HN908236", "\u0E1E\u0E31\u0E0A\u0E23\u0E35", "\u0E21\u0E35\u0E2A\u0E38\u0E02", "1995-03-08", "FEMALE", "A+", "\u0E1D\u0E48\u0E32\u0E22\u0E1A\u0E31\u0E0D\u0E0A\u0E35\u0E41\u0E25\u0E30\u0E01\u0E32\u0E23\u0E40\u0E07\u0E34\u0E19 (Finance)", "BACKOFFICE", "patcharee.me@bdms.co.th", "083-456-7890", "\u0E04\u0E38\u0E13\u0E27\u0E34\u0E0A\u0E31\u0E22 \u0E21\u0E35\u0E2A\u0E38\u0E02", "087-654-3210", "ACTIVE", now, "SYSTEM", now, "SYSTEM", 1, false],
+        ["ST8007", "HN908237", "\u0E2D\u0E23\u0E23\u0E16\u0E1E\u0E25", "\u0E21\u0E35\u0E0A\u0E31\u0E22", "1990-09-12", "MALE", "AB+", "\u0E41\u0E1C\u0E19\u0E01\u0E2D\u0E38\u0E1A\u0E31\u0E15\u0E34\u0E40\u0E2B\u0E15\u0E38\u0E41\u0E25\u0E30\u0E09\u0E38\u0E01\u0E40\u0E09\u0E34\u0E19 (ER)", "FRONTLINE", "atthaphol.me@bdms.co.th", "084-567-8901", "\u0E04\u0E38\u0E13\u0E19\u0E20\u0E32 \u0E21\u0E35\u0E0A\u0E31\u0E22", "086-543-2109", "ACTIVE", now, "SYSTEM", now, "SYSTEM", 1, false],
+        ["ST8008", "HN908238", "\u0E18\u0E35\u0E23\u0E40\u0E14\u0E0A", "\u0E27\u0E07\u0E29\u0E4C\u0E2A\u0E27\u0E48\u0E32\u0E07", "1985-07-04", "MALE", "O+", "\u0E28\u0E39\u0E19\u0E22\u0E4C\u0E40\u0E2D\u0E47\u0E01\u0E0B\u0E40\u0E23\u0E22\u0E4C\u0E41\u0E25\u0E30\u0E20\u0E32\u0E1E\u0E27\u0E34\u0E19\u0E34\u0E08\u0E09\u0E31\u0E22 (Radiology)", "CLINICAL", "theeradech.wo@bdms.co.th", "085-678-9012", "\u0E04\u0E38\u0E13\u0E2A\u0E21\u0E43\u0E08 \u0E27\u0E07\u0E29\u0E4C\u0E2A\u0E27\u0E48\u0E32\u0E07", "085-432-1098", "ACTIVE", now, "SYSTEM", now, "SYSTEM", 1, false]
+      ];
+      sampleStaff.forEach((row) => staffSheet.appendRow(row));
+    }
+  }
+  function seedUserAccounts() {
+    const props = PropertiesService.getScriptProperties();
+    const securitySsId = props.getProperty(SECURITY_DATABASE_CONFIG.propertyKey);
+    if (!securitySsId) return;
+    const ss = SpreadsheetApp.openById(securitySsId);
+    const userSheet = ss.getSheetByName("USER_ACCOUNT");
+    if (!userSheet) return;
+    if (userSheet.getLastRow() === 1) {
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      const staffIds = ["ST8004", "ST8005", "ST8006", "ST8007", "ST8008", "IC8001", "HR8002", "MD8003"];
+      staffIds.forEach((staffId, index) => {
+        const { hash, salt, iterations } = PasswordService.hashPassword("password123", void 0, 1e4);
+        const userUuid = `user-00${index + 1}`;
+        const userRow = [
+          userUuid,
+          staffId,
+          hash,
+          salt,
+          iterations,
+          0,
+          "",
+          false,
+          "ACTIVE",
+          now,
+          "SYSTEM",
+          now,
+          "SYSTEM",
+          1,
+          false
+        ];
+        userSheet.appendRow(userRow);
+      });
+    }
+  }
 
   // src/repositories/DashboardCacheRepository.ts
   var DashboardCacheRepository = class {
@@ -2155,8 +2219,7 @@ var GASApp = (() => {
       const rows = this.sheetRepo.getRows("DASHBOARD_CACHE");
       const now = (/* @__PURE__ */ new Date()).toISOString();
       const match = rows.find((r) => String(r.CacheKey) === cacheKey && String(r.ExpiresAt) > now && (!r.IsDeleted || String(r.IsDeleted) === "FALSE"));
-      if (!match)
-        return null;
+      if (!match) return null;
       return {
         cacheUuid: String(match.CacheUUID),
         cacheKey: String(match.CacheKey),
@@ -2301,10 +2364,8 @@ var GASApp = (() => {
       staffList.forEach((staff) => {
         const wg = staff.WorkGroup || "BACKOFFICE";
         const dept = staff.DepartmentCode || "OTHER";
-        if (!workGroupBreakdown[wg])
-          workGroupBreakdown[wg] = { total: 0, complete: 0, rate: 0 };
-        if (!departmentBreakdown[dept])
-          departmentBreakdown[dept] = { total: 0, complete: 0, rate: 0 };
+        if (!workGroupBreakdown[wg]) workGroupBreakdown[wg] = { total: 0, complete: 0, rate: 0 };
+        if (!departmentBreakdown[dept]) departmentBreakdown[dept] = { total: 0, complete: 0, rate: 0 };
         workGroupBreakdown[wg].total++;
         departmentBreakdown[dept].total++;
         const vacs = this.clinicalRepo.findVaccinationsByStaffId(staff.StaffID);
@@ -2764,30 +2825,13 @@ var GASApp = (() => {
     const auditService = new AuditService();
     return auditService.verifyAuditChain("CRON_SYSTEM");
   }
-  return __toCommonJS(src_exports);
+  return __toCommonJS(index_exports);
 })();
 
 // Google Apps Script Top-Level Entry Points
-function doGet(e) {
-  return GASApp.doGet(e);
-}
-
-function doPost(e) {
-  return GASApp.doPost(e);
-}
-
-function setupAllSpreadsheetsAndSheets() {
-  return GASApp.setupAllSpreadsheetsAndSheets();
-}
-
-function cronDailyMailQueue() {
-  return GASApp.cronDailyMailQueue();
-}
-
-function cronRecalculateDashboardCache() {
-  return GASApp.cronRecalculateDashboardCache();
-}
-
-function cronAuditChainScan() {
-  return GASApp.cronAuditChainScan();
-}
+function doGet(e) { return GASApp.doGet(e); }
+function doPost(e) { return GASApp.doPost(e); }
+function setupAllSpreadsheetsAndSheets() { return GASApp.setupAllSpreadsheetsAndSheets(); }
+function cronDailyMailQueue() { return GASApp.cronDailyMailQueue(); }
+function cronRecalculateDashboardCache() { return GASApp.cronRecalculateDashboardCache(); }
+function cronAuditChainScan() { return GASApp.cronAuditChainScan(); }

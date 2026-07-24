@@ -9,6 +9,7 @@
   },
   "devDependencies": {
     "@types/google-apps-script": "^1.0.83",
+    "esbuild": "^0.28.1",
     "typescript": "^5.4.5"
   }
 }

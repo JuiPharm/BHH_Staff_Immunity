@@ -3,17 +3,20 @@ import { ImportValidationService } from './ImportValidationService';
 import { ImportRepository } from '../repositories/ImportRepository';
 import { StaffRepository } from '../repositories/StaffRepository';
 import { ClinicalRepository } from '../repositories/ClinicalRepository';
+import { AccountRepository } from '../repositories/AccountRepository';
 import { CryptoService } from './CryptoService';
 
 export class ImportService {
   private importRepo: ImportRepository;
   private staffRepo: StaffRepository;
   private clinicalRepo: ClinicalRepository;
+  private accountRepo: AccountRepository;
 
-  constructor(importRepo?: ImportRepository, staffRepo?: StaffRepository, clinicalRepo?: ClinicalRepository) {
+  constructor(importRepo?: ImportRepository, staffRepo?: StaffRepository, clinicalRepo?: ClinicalRepository, accountRepo?: AccountRepository) {
     this.importRepo = importRepo || new ImportRepository();
     this.staffRepo = staffRepo || new StaffRepository();
     this.clinicalRepo = clinicalRepo || new ClinicalRepository();
+    this.accountRepo = accountRepo || new AccountRepository();
   }
 
   /**
@@ -128,6 +131,11 @@ export class ImportService {
             },
             executedBy
           );
+          
+          // Production Workflow: Automatically provision a user account for the new staff
+          // Default password is set to 'password123' and they are forced to change it on first login.
+          this.accountRepo.createAccount(staffId, 'password123', executedBy);
+          
           insertedRows++;
         }
       } else if (targetType === 'VACCINATION') {

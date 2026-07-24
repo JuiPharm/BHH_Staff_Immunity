@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Card, CardContent, Typography, TextField, Button, Box, Alert, CircularProgress, Chip } from '@mui/material';
+import { Card, CardContent, Typography, TextField, Button, Box, Alert, CircularProgress } from '@mui/material';
 import { ShieldAlert } from 'lucide-react';
 import { apiService } from '../../services/api';
 import { UserSession } from '../../types';
@@ -30,10 +30,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
     }
   };
 
-  const handleQuickLogin = (quickStaffId: string) => {
-    setStaffId(quickStaffId);
-    setPassword('password123');
-  };
 
   return (
     <Box
@@ -114,18 +110,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
             </Button>
           </form>
 
-          {/* Quick Demo Credentials Assistant */}
-          <Box sx={{ mt: 3, pt: 2, borderTop: `1px solid ${bdmsColors.border}` }}>
-            <Typography variant="caption" sx={{ color: bdmsColors.textSecondary, fontWeight: 600, display: 'block', mb: 1 }}>
-              💡 คลิกเพื่อทดสอบ Login ตามสิทธิ์ต่าง ๆ (Quick Demo Accounts):
-            </Typography>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-              <Chip label="IC (Infection Control)" onClick={() => handleQuickLogin('IC8001')} color="primary" size="small" />
-              <Chip label="HR Specialist" onClick={() => handleQuickLogin('HR8002')} color="info" size="small" />
-              <Chip label="Physician (แพทย์)" onClick={() => handleQuickLogin('MD8003')} sx={{ bgcolor: '#8E24AA', color: '#FFF' }} size="small" />
-              <Chip label="Data Owner (พยาบาล)" onClick={() => handleQuickLogin('ST8004')} color="success" size="small" />
-            </Box>
-          </Box>
         </CardContent>
       </Card>
     </Box>

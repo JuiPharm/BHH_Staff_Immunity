@@ -396,6 +396,8 @@ function seedUserAccounts(): void {
       'ST8008': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' }
     };
 
+    const staffIds = Object.keys(userRoleMap);
+
     staffIds.forEach((staffId, index) => {
       // Use 10,000 iterations for testing instead of 100,000 to save GAS execution time during setup
       const { hash, salt, iterations } = PasswordService.hashPassword('password123', undefined, 10000);

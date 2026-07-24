@@ -2924,6 +2924,7 @@ var GASApp = (() => {
         "ST8007": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" },
         "ST8008": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" }
       };
+      const staffIds = Object.keys(userRoleMap);
       staffIds.forEach((staffId, index) => {
         const { hash, salt, iterations } = PasswordService.hashPassword("password123", void 0, 1e4);
         const userUuid = `user-00${index + 1}`;

@@ -253,6 +253,9 @@ export function setupAllDatabases(): void {
 
   // Seed System Constant Metadata ONLY (No Staff PII!)
   seedSystemConstants();
+
+  // Seed 5 Sample Staff for Testing
+  seedSampleData();
 }
 
 /**
@@ -300,5 +303,32 @@ function seedSystemConstants(): void {
       false
     ];
     auditSheet.appendRow(genesisLog);
+  }
+}
+
+/**
+ * Seeds 5 Sample Staff for Testing
+ */
+function seedSampleData(): void {
+  const props = PropertiesService.getScriptProperties();
+  const clinicalSsId = props.getProperty(CLINICAL_DATABASE_CONFIG.propertyKey);
+  if (!clinicalSsId) return;
+
+  const ss = SpreadsheetApp.openById(clinicalSsId);
+  const staffSheet = ss.getSheetByName('STAFF');
+  if (!staffSheet) return;
+
+  // Add only if the sheet is empty (only header exists)
+  if (staffSheet.getLastRow() === 1) {
+    const now = new Date().toISOString();
+    const sampleStaff = [
+      ['ST8004', 'HN908234', 'อารียา', 'รักษ์ดี', '1992-05-14', 'FEMALE', 'O+', 'แผนกผู้ป่วยนอก (OPD)', 'FRONTLINE', 'areeya.ra@bdms.co.th', '081-234-5678', 'คุณสมศักดิ์ รักษ์ดี', '089-876-5432', 'ACTIVE', now, 'SYSTEM', now, 'SYSTEM', 1, false],
+      ['ST8005', 'HN908235', 'กิตติศักดิ์', 'มุ่งมั่น', '1988-11-20', 'MALE', 'B+', 'ห้องคลังยา (Pharmacy)', 'CLINICAL', 'kittisak.mu@bdms.co.th', '082-345-6789', 'คุณเพ็ญศรี มุ่งมั่น', '088-765-4321', 'ACTIVE', now, 'SYSTEM', now, 'SYSTEM', 1, false],
+      ['ST8006', 'HN908236', 'พัชรี', 'มีสุข', '1995-03-08', 'FEMALE', 'A+', 'ฝ่ายบัญชีและการเงิน (Finance)', 'BACKOFFICE', 'patcharee.me@bdms.co.th', '083-456-7890', 'คุณวิชัย มีสุข', '087-654-3210', 'ACTIVE', now, 'SYSTEM', now, 'SYSTEM', 1, false],
+      ['ST8007', 'HN908237', 'อรรถพล', 'มีชัย', '1990-09-12', 'MALE', 'AB+', 'แผนกอุบัติเหตุและฉุกเฉิน (ER)', 'FRONTLINE', 'atthaphol.me@bdms.co.th', '084-567-8901', 'คุณนภา มีชัย', '086-543-2109', 'ACTIVE', now, 'SYSTEM', now, 'SYSTEM', 1, false],
+      ['ST8008', 'HN908238', 'ธีรเดช', 'วงษ์สว่าง', '1985-07-04', 'MALE', 'O+', 'ศูนย์เอ็กซเรย์และภาพวินิจฉัย (Radiology)', 'CLINICAL', 'theeradech.wo@bdms.co.th', '085-678-9012', 'คุณสมใจ วงษ์สว่าง', '085-432-1098', 'ACTIVE', now, 'SYSTEM', now, 'SYSTEM', 1, false]
+    ];
+
+    sampleStaff.forEach(row => staffSheet.appendRow(row));
   }
 }

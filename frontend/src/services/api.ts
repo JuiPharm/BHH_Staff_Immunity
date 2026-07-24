@@ -20,7 +20,7 @@ export const setStoredSession = (session: UserSession | null) => {
   }
 };
 
-export const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbwZhiYOz_EyRdbIRwsRurrboTkF_Sg6GXMLY8LAh68hwNpO4FmoN_Wbx6luDB12Ar0Q/exec';
+export const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbx4PX8yYrTZi49I_aHmv1EFnaLMCMjI0MdIOfEYVpZef2HtH5-o-TSkCwOkSThq0ND6/exec';
 
 /**
  * Generic API Caller for Google Apps Script

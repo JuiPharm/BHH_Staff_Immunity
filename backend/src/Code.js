@@ -779,8 +779,8 @@ var GASApp = (() => {
   // src/repositories/StaffRepository.ts
   var StaffRepository = class {
     constructor(sheetRepo) {
-      const clinicalSsId = PropertiesService.getScriptProperties().getProperty("DB_CLINICAL_SPREADSHEET_ID");
-      this.sheetRepo = sheetRepo || new SheetRepository(clinicalSsId || void 0);
+      const clinicalSsId = typeof PropertiesService !== "undefined" ? PropertiesService.getScriptProperties().getProperty("DB_CLINICAL_SPREADSHEET_ID") : null;
+      this.sheetRepo = sheetRepo || new SheetRepository(clinicalSsId || "1IFJOErjojIQJq02l6i2a022EEy7YIrh1eRTwpxzXJRE");
     }
     /**
      * Maps raw sheet row to StaffRecordDTO.
@@ -1328,8 +1328,8 @@ var GASApp = (() => {
   // src/repositories/ClinicalRepository.ts
   var ClinicalRepository = class {
     constructor(sheetRepo) {
-      const clinicalSsId = PropertiesService.getScriptProperties().getProperty("DB_CLINICAL_SPREADSHEET_ID");
-      this.sheetRepo = sheetRepo || new SheetRepository(clinicalSsId || void 0);
+      const clinicalSsId = typeof PropertiesService !== "undefined" ? PropertiesService.getScriptProperties().getProperty("DB_CLINICAL_SPREADSHEET_ID") : null;
+      this.sheetRepo = sheetRepo || new SheetRepository(clinicalSsId || "1IFJOErjojIQJq02l6i2a022EEy7YIrh1eRTwpxzXJRE");
     }
     // --- VACCINATION METHODS ---
     findVaccinationsByStaffId(staffId) {
@@ -2118,8 +2118,8 @@ var GASApp = (() => {
   // src/repositories/AuditRepository.ts
   var AuditRepository = class {
     constructor(sheetRepo) {
-      const auditSsId = PropertiesService.getScriptProperties().getProperty("DB_AUDIT_SPREADSHEET_ID");
-      this.sheetRepo = sheetRepo || new SheetRepository(auditSsId || void 0);
+      const auditSsId = typeof PropertiesService !== "undefined" ? PropertiesService.getScriptProperties().getProperty("DB_AUDIT_SPREADSHEET_ID") : null;
+      this.sheetRepo = sheetRepo || new SheetRepository(auditSsId || "1CnZIe2REEWrEowRVsiNT9nvcPjh_QxJrQq4sxoZRJoo");
     }
     /**
      * Appends a new Audit Log entry to AUDIT_LOG sheet using LockService.
@@ -2560,6 +2560,8 @@ var GASApp = (() => {
           "LockoutUntil",
           "MustChangePassword",
           "AccountStatus",
+          "FunctionalRole",
+          "UserLevel",
           "CreatedAt",
           "CreatedBy",
           "UpdatedAt",
@@ -2912,10 +2914,20 @@ var GASApp = (() => {
     if (!userSheet) return;
     if (userSheet.getLastRow() === 1) {
       const now = (/* @__PURE__ */ new Date()).toISOString();
-      const staffIds = ["ST8004", "ST8005", "ST8006", "ST8007", "ST8008", "IC8001", "HR8002", "MD8003"];
+      const userRoleMap = {
+        "IC8001": { functionalRole: "INFECTION_CONTROL", userLevel: "SUPERUSER" },
+        "HR8002": { functionalRole: "HR", userLevel: "SUPERUSER" },
+        "MD8003": { functionalRole: "PHYSICIAN", userLevel: "SUPERUSER" },
+        "ST8004": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" },
+        "ST8005": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" },
+        "ST8006": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" },
+        "ST8007": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" },
+        "ST8008": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" }
+      };
       staffIds.forEach((staffId, index) => {
         const { hash, salt, iterations } = PasswordService.hashPassword("password123", void 0, 1e4);
         const userUuid = `user-00${index + 1}`;
+        const roleInfo = userRoleMap[staffId] || { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" };
         const userRow = [
           userUuid,
           staffId,
@@ -2926,6 +2938,8 @@ var GASApp = (() => {
           "",
           false,
           "ACTIVE",
+          roleInfo.functionalRole,
+          roleInfo.userLevel,
           now,
           "SYSTEM",
           now,

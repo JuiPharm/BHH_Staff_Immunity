@@ -111,6 +111,7 @@ export const SECURITY_DATABASE_CONFIG: DatabaseConfig = {
       headers: [
         'UserUUID', 'StaffID', 'PasswordHash', 'Salt', 'Iterations',
         'FailedLoginCount', 'LockoutUntil', 'MustChangePassword', 'AccountStatus',
+        'FunctionalRole', 'UserLevel',
         'CreatedAt', 'CreatedBy', 'UpdatedAt', 'UpdatedBy', 'RecordVersion', 'IsDeleted'
       ]
     },
@@ -384,16 +385,27 @@ function seedUserAccounts(): void {
   if (userSheet.getLastRow() === 1) {
     const now = new Date().toISOString();
     
-    const staffIds = ['ST8004', 'ST8005', 'ST8006', 'ST8007', 'ST8008', 'IC8001', 'HR8002', 'MD8003'];
-    
+    const userRoleMap: Record<string, { functionalRole: string; userLevel: string }> = {
+      'IC8001': { functionalRole: 'INFECTION_CONTROL', userLevel: 'SUPERUSER' },
+      'HR8002': { functionalRole: 'HR', userLevel: 'SUPERUSER' },
+      'MD8003': { functionalRole: 'PHYSICIAN', userLevel: 'SUPERUSER' },
+      'ST8004': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' },
+      'ST8005': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' },
+      'ST8006': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' },
+      'ST8007': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' },
+      'ST8008': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' }
+    };
+
     staffIds.forEach((staffId, index) => {
       // Use 10,000 iterations for testing instead of 100,000 to save GAS execution time during setup
       const { hash, salt, iterations } = PasswordService.hashPassword('password123', undefined, 10000);
       const userUuid = `user-00${index + 1}`;
+      const roleInfo = userRoleMap[staffId] || { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' };
       
       const userRow = [
         userUuid, staffId, hash, salt, iterations,
         0, '', false, 'ACTIVE',
+        roleInfo.functionalRole, roleInfo.userLevel,
         now, 'SYSTEM', now, 'SYSTEM', 1, false
       ];
       

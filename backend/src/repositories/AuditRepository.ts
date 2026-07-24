@@ -6,8 +6,10 @@ export class AuditRepository {
   private sheetRepo: SheetRepository;
 
   constructor(sheetRepo?: SheetRepository) {
-    const auditSsId = PropertiesService.getScriptProperties().getProperty('DB_AUDIT_SPREADSHEET_ID');
-    this.sheetRepo = sheetRepo || new SheetRepository(auditSsId || undefined);
+    const auditSsId = typeof PropertiesService !== 'undefined' 
+      ? PropertiesService.getScriptProperties().getProperty('DB_AUDIT_SPREADSHEET_ID') 
+      : null;
+    this.sheetRepo = sheetRepo || new SheetRepository(auditSsId || '1CnZIe2REEWrEowRVsiNT9nvcPjh_QxJrQq4sxoZRJoo');
   }
 
   /**

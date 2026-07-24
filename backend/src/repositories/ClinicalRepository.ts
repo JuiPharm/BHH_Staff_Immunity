@@ -6,8 +6,10 @@ export class ClinicalRepository {
   private sheetRepo: SheetRepository;
 
   constructor(sheetRepo?: SheetRepository) {
-    const clinicalSsId = PropertiesService.getScriptProperties().getProperty('DB_CLINICAL_SPREADSHEET_ID');
-    this.sheetRepo = sheetRepo || new SheetRepository(clinicalSsId || undefined);
+    const clinicalSsId = typeof PropertiesService !== 'undefined' 
+      ? PropertiesService.getScriptProperties().getProperty('DB_CLINICAL_SPREADSHEET_ID') 
+      : null;
+    this.sheetRepo = sheetRepo || new SheetRepository(clinicalSsId || '1IFJOErjojIQJq02l6i2a022EEy7YIrh1eRTwpxzXJRE');
   }
 
   // --- VACCINATION METHODS ---

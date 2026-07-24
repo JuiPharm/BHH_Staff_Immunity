@@ -11,6 +11,8 @@ export interface UserAccountRecord {
   LockoutUntil?: string;
   MustChangePassword: boolean;
   AccountStatus: 'ACTIVE' | 'DISABLED' | 'LOCKED';
+  FunctionalRole?: string;
+  UserLevel?: 'SUPERUSER' | 'NORMAL_USER';
   ResetTokenHash?: string;
   ResetTokenExpiresAt?: string;
   CreatedAt: string;

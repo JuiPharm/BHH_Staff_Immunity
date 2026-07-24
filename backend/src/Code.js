@@ -1964,6 +1964,54 @@ var GASApp = (() => {
       this.cacheRepo.invalidateCache("DASHBOARD_FOLLOWUP_SUMMARY");
       this.cacheRepo.invalidateCache("DASHBOARD_PROGRESS_SUMMARY");
     }
+    /**
+     * Drill-down Staff Detail List by Category from Real Database!
+     */
+    getDrillDownDetail(category, userRole) {
+      const staffList = this.staffRepo.findAll(false);
+      const catUpper = String(category || "TOTAL").toUpperCase();
+      let filteredStaff = staffList;
+      if (catUpper === "COMPLETE") {
+        filteredStaff = staffList.filter((s) => {
+          const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+          return vacs.length >= 2;
+        });
+      } else if (catUpper === "INCOMPLETE") {
+        filteredStaff = staffList.filter((s) => {
+          const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+          return vacs.length < 2;
+        });
+      } else if (catUpper === "PENDING_VERIFICATION") {
+        filteredStaff = staffList.filter((s) => {
+          const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+          return vacs.some((v) => String(v.VerificationStatus).toUpperCase() === "PENDING");
+        });
+      } else if (["OVERDUE", "DUE_7_DAYS", "DUE_30_DAYS", "DUE_60_DAYS", "REJECTED_EVIDENCE", "EMAIL_FAILED"].includes(catUpper)) {
+        filteredStaff = staffList.filter((s) => {
+          const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+          return vacs.length < 2;
+        });
+      } else if (["CLINICAL", "FRONTLINE", "BACKOFFICE"].includes(catUpper)) {
+        filteredStaff = staffList.filter((s) => String(s.WorkGroup).toUpperCase() === catUpper);
+      }
+      const items = filteredStaff.map((s) => {
+        const name = `${s.TitleTH || ""} ${s.FirstName || ""} ${s.LastName || ""}`.trim() || s.StaffID;
+        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+        const isComplete = vacs.length >= 2;
+        return {
+          staffId: s.StaffID,
+          name,
+          department: s.DepartmentCode || "N/A",
+          workGroup: s.WorkGroup || "BACKOFFICE",
+          status: isComplete ? "\u0E04\u0E23\u0E1A\u0E16\u0E49\u0E27\u0E19 (Complete)" : "\u0E15\u0E49\u0E2D\u0E07\u0E15\u0E34\u0E14\u0E15\u0E32\u0E21 (Incomplete)"
+        };
+      });
+      return {
+        category: catUpper,
+        totalCount: items.length,
+        items
+      };
+    }
     applyRoleMasking(dataObj, userRole) {
       if (userRole === "HR") {
         return FieldMaskingUtil.maskHealthRecord(dataObj, "HR");
@@ -2049,11 +2097,9 @@ var GASApp = (() => {
       }
       const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_STAFF_LIST", void 0, requestId);
       if (!auth.isAuthorized) return auth.errorResponse;
-      const sampleDrillDownItems = [
-        { staffId: "ST8004", name: "\u0E1E\u0E27. \u0E2D\u0E32\u0E23\u0E35\u0E22\u0E32 \u0E2A\u0E38\u0E02\u0E1B\u0E23\u0E30\u0E40\u0E2A\u0E23\u0E34\u0E10", department: "ICU", status: (payload == null ? void 0 : payload.category) || "OVERDUE" },
-        { staffId: "ST8005", name: "\u0E19\u0E1E. \u0E27\u0E23\u0E40\u0E27\u0E0A \u0E23\u0E31\u0E15\u0E19\u0E08\u0E34\u0E19\u0E14\u0E32", department: "ER", status: (payload == null ? void 0 : payload.category) || "OVERDUE" }
-      ];
-      return ResponseHelper.success({ category: payload == null ? void 0 : payload.category, items: sampleDrillDownItems }, requestId);
+      const category = typeof payload === "string" ? payload : (payload == null ? void 0 : payload.category) || "TOTAL";
+      const result = this.aggregationService.getDrillDownDetail(category, userRole);
+      return ResponseHelper.success(result, requestId);
     }
   };
 

@@ -182,6 +182,59 @@ export class DashboardAggregationService {
     this.cacheRepo.invalidateCache('DASHBOARD_PROGRESS_SUMMARY');
   }
 
+  /**
+   * Drill-down Staff Detail List by Category from Real Database!
+   */
+  public getDrillDownDetail(category: string, userRole: UserRole): any {
+    const staffList = this.staffRepo.findAll(false);
+    const catUpper = String(category || 'TOTAL').toUpperCase();
+
+    let filteredStaff = staffList;
+
+    if (catUpper === 'COMPLETE') {
+      filteredStaff = staffList.filter((s) => {
+        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+        return vacs.length >= 2;
+      });
+    } else if (catUpper === 'INCOMPLETE') {
+      filteredStaff = staffList.filter((s) => {
+        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+        return vacs.length < 2;
+      });
+    } else if (catUpper === 'PENDING_VERIFICATION') {
+      filteredStaff = staffList.filter((s) => {
+        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+        return vacs.some((v) => String(v.VerificationStatus).toUpperCase() === 'PENDING');
+      });
+    } else if (['OVERDUE', 'DUE_7_DAYS', 'DUE_30_DAYS', 'DUE_60_DAYS', 'REJECTED_EVIDENCE', 'EMAIL_FAILED'].includes(catUpper)) {
+      filteredStaff = staffList.filter((s) => {
+        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+        return vacs.length < 2;
+      });
+    } else if (['CLINICAL', 'FRONTLINE', 'BACKOFFICE'].includes(catUpper)) {
+      filteredStaff = staffList.filter((s) => String(s.WorkGroup).toUpperCase() === catUpper);
+    }
+
+    const items = filteredStaff.map((s) => {
+      const name = `${s.TitleTH || ''} ${s.FirstName || ''} ${s.LastName || ''}`.trim() || s.StaffID;
+      const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+      const isComplete = vacs.length >= 2;
+      return {
+        staffId: s.StaffID,
+        name: name,
+        department: s.DepartmentCode || 'N/A',
+        workGroup: s.WorkGroup || 'BACKOFFICE',
+        status: isComplete ? 'ครบถ้วน (Complete)' : 'ต้องติดตาม (Incomplete)'
+      };
+    });
+
+    return {
+      category: catUpper,
+      totalCount: items.length,
+      items: items
+    };
+  }
+
   private applyRoleMasking(dataObj: any, userRole: UserRole): any {
     if (userRole === 'HR') {
       return FieldMaskingUtil.maskHealthRecord(dataObj, 'HR');

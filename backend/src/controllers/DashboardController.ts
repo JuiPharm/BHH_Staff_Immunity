@@ -96,11 +96,9 @@ export class DashboardController {
     const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, 'READ_STAFF_LIST', undefined, requestId);
     if (!auth.isAuthorized) return auth.errorResponse!;
 
-    const sampleDrillDownItems = [
-      { staffId: 'ST8004', name: 'พว. อารียา สุขประเสริฐ', department: 'ICU', status: payload?.category || 'OVERDUE' },
-      { staffId: 'ST8005', name: 'นพ. วรเวช รัตนจินดา', department: 'ER', status: payload?.category || 'OVERDUE' }
-    ];
+    const category = typeof payload === 'string' ? payload : (payload?.category || 'TOTAL');
+    const result = this.aggregationService.getDrillDownDetail(category, userRole);
 
-    return ResponseHelper.success({ category: payload?.category, items: sampleDrillDownItems }, requestId);
+    return ResponseHelper.success(result, requestId);
   }
 }

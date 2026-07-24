@@ -61,20 +61,35 @@ export const DrillDownModal: React.FC<DrillDownModalProps> = ({ open, category, 
                 <TableCell sx={{ fontWeight: 700 }}>StaffID</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>ชื่อ-นามสกุล</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>แผนก</TableCell>
-                <TableCell sx={{ fontWeight: 700 }}>สถานะ</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>กลุ่มงาน</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>สถานะความพร้อม</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {items.map((row) => (
-                <TableRow key={row.staffId} hover>
-                  <TableCell sx={{ fontWeight: 700 }}>{row.staffId}</TableCell>
-                  <TableCell>{row.name}</TableCell>
-                  <TableCell>{row.department}</TableCell>
-                  <TableCell>
-                    <Chip label={row.status} color="error" size="small" sx={{ fontWeight: 700 }} />
+              {items.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} align="center" sx={{ py: 3, color: 'text.secondary' }}>
+                    ไม่พบข้อมูลบุคลากรในหมวดหมู่นี้
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                items.map((row, idx) => (
+                  <TableRow key={row.staffId || idx} hover>
+                    <TableCell sx={{ fontWeight: 700, color: '#0A2540' }}>{row.staffId}</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>{row.name}</TableCell>
+                    <TableCell>{row.department}</TableCell>
+                    <TableCell>{row.workGroup || 'N/A'}</TableCell>
+                    <TableCell>
+                      <Chip
+                        label={row.status}
+                        color={String(row.status).includes('Complete') || String(row.status).includes('ครบถ้วน') ? 'success' : 'warning'}
+                        size="small"
+                        sx={{ fontWeight: 700 }}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         )}

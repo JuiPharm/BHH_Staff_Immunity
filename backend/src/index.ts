@@ -60,6 +60,8 @@ export function doPost(e: GoogleAppsScript.Events.DoPost): GoogleAppsScript.Cont
     const authCtrl = new AuthController();
     const staffCtrl = new StaffController();
     const clinicalCtrl = new ClinicalController();
+    const auditCtrl = new AuditController();
+    const dashCtrl = new DashboardController();
 
     // Action Router Dispatcher
     switch (action) {
@@ -73,6 +75,18 @@ export function doPost(e: GoogleAppsScript.Events.DoPost): GoogleAppsScript.Cont
         return staffCtrl.createStaff(role, staffId, payload.staffData, requestId);
       case 'getHealthRecords':
         return clinicalCtrl.getVaccinations(role, staffId, payload.targetStaffId || staffId, requestId);
+      case 'getAuditLogs':
+        return auditCtrl.getAuditLogs(role, staffId, requestId);
+      case 'getCompletenessDashboard':
+        return dashCtrl.getCompletenessDashboard(role, staffId, requestId);
+      case 'getFollowUpDashboard':
+        return dashCtrl.getFollowUpDashboard(role, staffId, requestId);
+      case 'getProgressDashboard':
+        return dashCtrl.getProgressDashboard(role, staffId, requestId);
+      case 'refreshDashboardCache':
+        return dashCtrl.refreshDashboardCache(role, staffId, requestId);
+      case 'getDrillDownDetail':
+        return dashCtrl.getDrillDownDetail(role, staffId, payload.category || '', requestId);
       default:
         return ResponseHelper.error('UNKNOWN_ACTION', `Action '${action}' is not recognized.`, requestId, 404);
     }

@@ -15,10 +15,11 @@ import {
   TextField,
   InputAdornment
 } from '@mui/material';
-import { Upload, Search } from 'lucide-react';
+import { Upload, Search, UserPlus } from 'lucide-react';
 import { apiService } from '../../services/api';
 import { StaffMaster, UserRole } from '../../types';
 import { ImportModal } from './ImportModal';
+import { AddStaffModal } from './AddStaffModal';
 import { bdmsColors } from '../../theme/bdmsTheme';
 
 interface StaffListViewProps {
@@ -29,6 +30,7 @@ export const StaffListView: React.FC<StaffListViewProps> = ({ userRole }) => {
   const [staffList, setStaffList] = useState<StaffMaster[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [importOpen, setImportOpen] = useState(false);
+  const [addStaffOpen, setAddStaffOpen] = useState(false);
 
   useEffect(() => {
     loadStaff();
@@ -61,17 +63,30 @@ export const StaffListView: React.FC<StaffListViewProps> = ({ userRole }) => {
           </Typography>
         </Box>
 
-        {userRole === 'HR' && (
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<Upload size={18} />}
-            onClick={() => setImportOpen(true)}
-            sx={{ fontWeight: 700 }}
-          >
-            Import Staff Master (Excel/CSV)
-          </Button>
-        )}
+        <Box sx={{ display: 'flex', gap: 1.5 }}>
+          {(userRole === 'HR' || userRole === 'SUPERUSER' || userRole === 'ADMIN') && (
+            <>
+              <Button
+                variant="outlined"
+                color="primary"
+                startIcon={<UserPlus size={18} />}
+                onClick={() => setAddStaffOpen(true)}
+                sx={{ fontWeight: 700 }}
+              >
+                เพิ่มพนักงานรายคน (Manual Entry)
+              </Button>
+              <Button
+                variant="contained"
+                color="primary"
+                startIcon={<Upload size={18} />}
+                onClick={() => setImportOpen(true)}
+                sx={{ fontWeight: 700 }}
+              >
+                Import Staff Master (Excel/CSV)
+              </Button>
+            </>
+          )}
+        </Box>
       </Box>
 
       {userRole === 'HR' && (
@@ -136,6 +151,7 @@ export const StaffListView: React.FC<StaffListViewProps> = ({ userRole }) => {
       </TableContainer>
 
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onImportSuccess={() => loadStaff()} />
+      <AddStaffModal open={addStaffOpen} onClose={() => setAddStaffOpen(false)} onSuccess={() => loadStaff()} />
     </Box>
   );
 };

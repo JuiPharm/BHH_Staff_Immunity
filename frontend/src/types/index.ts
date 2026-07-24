@@ -1,5 +1,5 @@
 // User Roles
-export type UserRole = 'INFECTION_CONTROL' | 'HR' | 'PHYSICIAN' | 'DATA_OWNER';
+export type UserRole = 'INFECTION_CONTROL' | 'HR' | 'PHYSICIAN' | 'DATA_OWNER' | 'SUPERUSER' | 'ADMIN' | 'NORMAL_USER';
 
 // Work Groups
 export type WorkGroup = 'CLINICAL' | 'FRONTLINE' | 'BACKOFFICE';

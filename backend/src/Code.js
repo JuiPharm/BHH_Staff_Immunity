@@ -272,7 +272,8 @@ var GASApp = (() => {
   // src/repositories/AccountRepository.ts
   var AccountRepository = class {
     constructor(sheetRepo) {
-      this.sheetRepo = sheetRepo || new SheetRepository();
+      const securitySsId = typeof PropertiesService !== "undefined" ? PropertiesService.getScriptProperties().getProperty("DB_SECURITY_SPREADSHEET_ID") : null;
+      this.sheetRepo = sheetRepo || new SheetRepository(securitySsId || "1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8");
     }
     /**
      * Finds user account by StaffID.
@@ -445,7 +446,8 @@ var GASApp = (() => {
   // src/repositories/SessionRepository.ts
   var SessionRepository = class {
     constructor(sheetRepo) {
-      this.sheetRepo = sheetRepo || new SheetRepository();
+      const securitySsId = typeof PropertiesService !== "undefined" ? PropertiesService.getScriptProperties().getProperty("DB_SECURITY_SPREADSHEET_ID") : null;
+      this.sheetRepo = sheetRepo || new SheetRepository(securitySsId || "1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8");
     }
     /**
      * Saves a new session into SESSION sheet using LockService.
@@ -1198,6 +1200,40 @@ var GASApp = (() => {
       "READ_HEALTH_RECORDS",
       "CREATE_HEALTH_RECORD",
       "EXPORT_HEALTH_DATA"
+    ],
+    SUPERUSER: [
+      "READ_STAFF_LIST",
+      "READ_STAFF_SELF",
+      "READ_HEALTH_RECORDS",
+      "CREATE_HEALTH_RECORD",
+      "UPDATE_HEALTH_RECORD",
+      "VERIFY_DOCUMENT",
+      "PHYSICIAN_ASSESSMENT",
+      "MANAGE_RULE_ENGINE",
+      "IMPORT_STAFF_MASTER",
+      "EXPORT_HEALTH_DATA",
+      "READ_AUDIT_LOGS",
+      "MANAGE_SUPERUSER_STATUS"
+    ],
+    ADMIN: [
+      "READ_STAFF_LIST",
+      "READ_STAFF_SELF",
+      "READ_HEALTH_RECORDS",
+      "CREATE_HEALTH_RECORD",
+      "UPDATE_HEALTH_RECORD",
+      "VERIFY_DOCUMENT",
+      "PHYSICIAN_ASSESSMENT",
+      "MANAGE_RULE_ENGINE",
+      "IMPORT_STAFF_MASTER",
+      "EXPORT_HEALTH_DATA",
+      "READ_AUDIT_LOGS",
+      "MANAGE_SUPERUSER_STATUS"
+    ],
+    NORMAL_USER: [
+      "READ_STAFF_SELF",
+      "READ_HEALTH_RECORDS",
+      "CREATE_HEALTH_RECORD",
+      "EXPORT_HEALTH_DATA"
     ]
   };
 
@@ -1648,6 +1684,673 @@ var GASApp = (() => {
     }
   };
 
+  // src/repositories/DashboardCacheRepository.ts
+  var DashboardCacheRepository = class {
+    constructor(sheetRepo) {
+      const auditSsId = PropertiesService.getScriptProperties().getProperty("DB_AUDIT_SPREADSHEET_ID");
+      this.sheetRepo = sheetRepo || new SheetRepository(auditSsId || void 0);
+    }
+    /**
+     * Retrieves valid non-expired dashboard cache record from DASHBOARD_CACHE sheet.
+     */
+    getValidCache(cacheKey) {
+      const rows = this.sheetRepo.getRows("DASHBOARD_CACHE");
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      const match = rows.find((r) => String(r.CacheKey) === cacheKey && String(r.ExpiresAt) > now && (!r.IsDeleted || String(r.IsDeleted) === "FALSE"));
+      if (!match) return null;
+      return {
+        cacheUuid: String(match.CacheUUID),
+        cacheKey: String(match.CacheKey),
+        cachedDataJson: String(match.CachedDataJson),
+        calculatedAt: String(match.CalculatedAt),
+        expiresAt: String(match.ExpiresAt)
+      };
+    }
+    /**
+     * Saves or updates dashboard cache in DASHBOARD_CACHE sheet using LockService.
+     */
+    saveCache(cacheKey, dataObj, ttlMinutes = 30) {
+      this.sheetRepo.executeWithLock(() => {
+        const now = /* @__PURE__ */ new Date();
+        const expiresAt = new Date(now.getTime() + ttlMinutes * 60 * 1e3).toISOString();
+        const calculatedAt = now.toISOString();
+        const existing = this.getValidCache(cacheKey);
+        if (existing) {
+          this.sheetRepo.updateRow("DASHBOARD_CACHE", "CacheKey", cacheKey, {
+            CachedDataJson: JSON.stringify(dataObj),
+            CalculatedAt: calculatedAt,
+            ExpiresAt: expiresAt,
+            UpdatedAt: calculatedAt
+          });
+        } else {
+          const headers = [
+            "CacheUUID",
+            "CacheKey",
+            "CachedDataJson",
+            "CalculatedAt",
+            "ExpiresAt",
+            "CreatedAt",
+            "CreatedBy",
+            "UpdatedAt",
+            "UpdatedBy",
+            "RecordVersion",
+            "IsDeleted"
+          ];
+          this.sheetRepo.appendRow("DASHBOARD_CACHE", headers, {
+            CacheUUID: `cache-${CryptoService.generateUuid()}`,
+            CacheKey: cacheKey,
+            CachedDataJson: JSON.stringify(dataObj),
+            CalculatedAt: calculatedAt,
+            ExpiresAt: expiresAt,
+            CreatedAt: calculatedAt,
+            CreatedBy: "SYSTEM",
+            UpdatedAt: calculatedAt,
+            UpdatedBy: "SYSTEM",
+            RecordVersion: 1,
+            IsDeleted: false
+          });
+        }
+      });
+    }
+    /**
+     * Invalidates a specific cache key.
+     */
+    invalidateCache(cacheKey) {
+      this.sheetRepo.executeWithLock(() => {
+        this.sheetRepo.updateRow("DASHBOARD_CACHE", "CacheKey", cacheKey, {
+          ExpiresAt: "2000-01-01T00:00:00Z",
+          UpdatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        });
+      });
+    }
+  };
+
+  // src/utils/FieldMaskingUtil.ts
+  var FieldMaskingUtil = class {
+    /**
+     * Masks sensitive clinical fields if user role is HR.
+     */
+    static maskHealthRecord(record, userRole) {
+      if (userRole !== "HR") {
+        return record;
+      }
+      const maskedRecord = { ...record };
+      if (maskedRecord.QuantitativeValue !== void 0) {
+        maskedRecord.QuantitativeValue = this.MASKED_PLACEHOLDER;
+      }
+      if (maskedRecord.NumericValue !== void 0) {
+        maskedRecord.NumericValue = this.MASKED_PLACEHOLDER;
+      }
+      if (maskedRecord.RadiologistImpression !== void 0) {
+        maskedRecord.RadiologistImpression = this.MASKED_PLACEHOLDER;
+      }
+      if (maskedRecord.ClinicalNotes !== void 0) {
+        maskedRecord.ClinicalNotes = this.MASKED_PLACEHOLDER;
+      }
+      if (maskedRecord.OverrideReason !== void 0) {
+        maskedRecord.OverrideReason = this.MASKED_PLACEHOLDER;
+      }
+      if (maskedRecord.ExemptionCategory !== void 0) {
+        maskedRecord.ExemptionCategory = this.MASKED_PLACEHOLDER;
+      }
+      if (maskedRecord.RejectionReason !== void 0) {
+        maskedRecord.RejectionReason = this.MASKED_PLACEHOLDER;
+      }
+      return maskedRecord;
+    }
+    /**
+     * Masks an array of health records for HR.
+     */
+    static maskHealthRecords(records, userRole) {
+      return records.map((r) => this.maskHealthRecord(r, userRole));
+    }
+  };
+  FieldMaskingUtil.MASKED_PLACEHOLDER = "[RESTRICTED_HR_MASKED]";
+
+  // src/services/DashboardAggregationService.ts
+  var DashboardAggregationService = class {
+    constructor(cacheRepo, staffRepo, clinicalRepo) {
+      this.cacheRepo = cacheRepo || new DashboardCacheRepository();
+      this.staffRepo = staffRepo || new StaffRepository();
+      this.clinicalRepo = clinicalRepo || new ClinicalRepository();
+    }
+    /**
+     * Completeness Dashboard Aggregation with 2-tier Caching (RAM CacheService -> DB DASHBOARD_CACHE).
+     */
+    getCompletenessDashboard(userRole, forceRefresh = false) {
+      const cacheKey = "DASHBOARD_COMPLETENESS_SUMMARY";
+      if (!forceRefresh) {
+        const ramCache = CacheService.getScriptCache().get(cacheKey);
+        if (ramCache) {
+          return this.applyRoleMasking(JSON.parse(ramCache), userRole);
+        }
+        const dbCache = this.cacheRepo.getValidCache(cacheKey);
+        if (dbCache) {
+          CacheService.getScriptCache().put(cacheKey, dbCache.cachedDataJson, 1800);
+          return this.applyRoleMasking(JSON.parse(dbCache.cachedDataJson), userRole);
+        }
+      }
+      const staffList = this.staffRepo.findAll(false);
+      const totalStaff = staffList.length;
+      let completeCount = 0;
+      const workGroupBreakdown = {
+        CLINICAL: { total: 0, complete: 0, rate: 0 },
+        FRONTLINE: { total: 0, complete: 0, rate: 0 },
+        BACKOFFICE: { total: 0, complete: 0, rate: 0 }
+      };
+      const departmentBreakdown = {};
+      staffList.forEach((staff) => {
+        const wg = staff.WorkGroup || "BACKOFFICE";
+        const dept = staff.DepartmentCode || "OTHER";
+        if (!workGroupBreakdown[wg]) workGroupBreakdown[wg] = { total: 0, complete: 0, rate: 0 };
+        if (!departmentBreakdown[dept]) departmentBreakdown[dept] = { total: 0, complete: 0, rate: 0 };
+        workGroupBreakdown[wg].total++;
+        departmentBreakdown[dept].total++;
+        const vacs = this.clinicalRepo.findVaccinationsByStaffId(staff.StaffID);
+        const isComplete = vacs.length >= 2;
+        if (isComplete) {
+          completeCount++;
+          workGroupBreakdown[wg].complete++;
+          departmentBreakdown[dept].complete++;
+        }
+      });
+      Object.keys(workGroupBreakdown).forEach((k) => {
+        const g = workGroupBreakdown[k];
+        g.rate = g.total > 0 ? Math.round(g.complete / g.total * 100) : 0;
+      });
+      Object.keys(departmentBreakdown).forEach((k) => {
+        const d = departmentBreakdown[k];
+        d.rate = d.total > 0 ? Math.round(d.complete / d.total * 100) : 0;
+      });
+      const completionRate = totalStaff > 0 ? Math.round(completeCount / totalStaff * 100) : 0;
+      const dataObj = {
+        totalStaff,
+        completeCount,
+        incompleteCount: totalStaff - completeCount,
+        completionRate,
+        workGroupBreakdown,
+        departmentBreakdown,
+        pendingVerificationQueue: 14,
+        calculatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      this.cacheRepo.saveCache(cacheKey, dataObj, 30);
+      CacheService.getScriptCache().put(cacheKey, JSON.stringify(dataObj), 1800);
+      return this.applyRoleMasking(dataObj, userRole);
+    }
+    /**
+     * Follow-up Dashboard Aggregation.
+     */
+    getFollowUpDashboard(userRole, forceRefresh = false) {
+      const cacheKey = "DASHBOARD_FOLLOWUP_SUMMARY";
+      if (!forceRefresh) {
+        const ramCache = CacheService.getScriptCache().get(cacheKey);
+        if (ramCache) {
+          return this.applyRoleMasking(JSON.parse(ramCache), userRole);
+        }
+      }
+      const dataObj = {
+        vaccineRequired: 42,
+        labRequired: 18,
+        cxrRequired: 12,
+        physicianReviewRequired: 5,
+        overdueCount: 15,
+        dueWithin7Days: 8,
+        dueWithin30Days: 24,
+        dueWithin60Days: 30,
+        rejectedEvidenceCount: 3,
+        emailFailedCount: 1,
+        calculatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      this.cacheRepo.saveCache(cacheKey, dataObj, 30);
+      CacheService.getScriptCache().put(cacheKey, JSON.stringify(dataObj), 1800);
+      return this.applyRoleMasking(dataObj, userRole);
+    }
+    /**
+     * Progress Dashboard Aggregation.
+     */
+    getProgressDashboard(userRole, forceRefresh = false) {
+      const cacheKey = "DASHBOARD_PROGRESS_SUMMARY";
+      if (!forceRefresh) {
+        const ramCache = CacheService.getScriptCache().get(cacheKey);
+        if (ramCache) {
+          return this.applyRoleMasking(JSON.parse(ramCache), userRole);
+        }
+      }
+      const dataObj = {
+        completionTrend: [
+          { month: "Jan", rate: 65 },
+          { month: "Feb", rate: 72 },
+          { month: "Mar", rate: 78 },
+          { month: "Apr", rate: 84 },
+          { month: "May", rate: 89 },
+          { month: "Jun", rate: 93 }
+        ],
+        completedActionsThisMonth: 128,
+        newActionsThisMonth: 15,
+        overdueTrendCount: 8,
+        calculatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      this.cacheRepo.saveCache(cacheKey, dataObj, 30);
+      CacheService.getScriptCache().put(cacheKey, JSON.stringify(dataObj), 1800);
+      return this.applyRoleMasking(dataObj, userRole);
+    }
+    /**
+     * Manual Cache Refresh Trigger.
+     */
+    refreshAllCaches() {
+      CacheService.getScriptCache().removeAll([
+        "DASHBOARD_COMPLETENESS_SUMMARY",
+        "DASHBOARD_FOLLOWUP_SUMMARY",
+        "DASHBOARD_PROGRESS_SUMMARY"
+      ]);
+      this.cacheRepo.invalidateCache("DASHBOARD_COMPLETENESS_SUMMARY");
+      this.cacheRepo.invalidateCache("DASHBOARD_FOLLOWUP_SUMMARY");
+      this.cacheRepo.invalidateCache("DASHBOARD_PROGRESS_SUMMARY");
+    }
+    applyRoleMasking(dataObj, userRole) {
+      if (userRole === "HR") {
+        return FieldMaskingUtil.maskHealthRecord(dataObj, "HR");
+      }
+      return dataObj;
+    }
+  };
+
+  // src/controllers/DashboardController.ts
+  var DashboardController = class {
+    constructor(aggregationService) {
+      this.aggregationService = aggregationService || new DashboardAggregationService();
+    }
+    /**
+     * Completeness Dashboard Endpoint.
+     * Data Owner is BLOCKED.
+     */
+    getCompletenessDashboard(userRole, userStaffId, payload, requestId) {
+      if (userRole === "DATA_OWNER") {
+        return ResponseHelper.error("FORBIDDEN", "\u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23\u0E40\u0E08\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E23\u0E31\u0E1A\u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15\u0E43\u0E2B\u0E49\u0E40\u0E02\u0E49\u0E32\u0E16\u0E36\u0E07\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14\u0E20\u0E32\u0E1E\u0E23\u0E27\u0E21\u0E02\u0E2D\u0E07\u0E2D\u0E07\u0E04\u0E4C\u0E01\u0E23", requestId, 403);
+      }
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_STAFF_LIST", void 0, requestId);
+      if (!auth.isAuthorized) return auth.errorResponse;
+      try {
+        const data = this.aggregationService.getCompletenessDashboard(userRole, (payload == null ? void 0 : payload.forceRefresh) === true);
+        return ResponseHelper.success(data, requestId);
+      } catch (err) {
+        return ResponseHelper.error("DASHBOARD_ERROR", err.message, requestId, 500);
+      }
+    }
+    /**
+     * Follow-up Dashboard Endpoint.
+     */
+    getFollowUpDashboard(userRole, userStaffId, payload, requestId) {
+      if (userRole === "DATA_OWNER") {
+        return ResponseHelper.error("FORBIDDEN", "\u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23\u0E40\u0E08\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E23\u0E31\u0E1A\u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15\u0E43\u0E2B\u0E49\u0E40\u0E02\u0E49\u0E32\u0E16\u0E36\u0E07\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14\u0E20\u0E32\u0E1E\u0E23\u0E27\u0E21", requestId, 403);
+      }
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_STAFF_LIST", void 0, requestId);
+      if (!auth.isAuthorized) return auth.errorResponse;
+      try {
+        const data = this.aggregationService.getFollowUpDashboard(userRole, (payload == null ? void 0 : payload.forceRefresh) === true);
+        return ResponseHelper.success(data, requestId);
+      } catch (err) {
+        return ResponseHelper.error("DASHBOARD_ERROR", err.message, requestId, 500);
+      }
+    }
+    /**
+     * Progress Dashboard Endpoint.
+     */
+    getProgressDashboard(userRole, userStaffId, payload, requestId) {
+      if (userRole === "DATA_OWNER") {
+        return ResponseHelper.error("FORBIDDEN", "\u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23\u0E40\u0E08\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E23\u0E31\u0E1A\u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15\u0E43\u0E2B\u0E49\u0E40\u0E02\u0E49\u0E32\u0E16\u0E36\u0E07\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14\u0E20\u0E32\u0E1E\u0E23\u0E27\u0E21", requestId, 403);
+      }
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_STAFF_LIST", void 0, requestId);
+      if (!auth.isAuthorized) return auth.errorResponse;
+      try {
+        const data = this.aggregationService.getProgressDashboard(userRole, (payload == null ? void 0 : payload.forceRefresh) === true);
+        return ResponseHelper.success(data, requestId);
+      } catch (err) {
+        return ResponseHelper.error("DASHBOARD_ERROR", err.message, requestId, 500);
+      }
+    }
+    /**
+     * Manual Cache Refresh Endpoint.
+     */
+    refreshDashboardCache(userRole, userStaffId, requestId) {
+      if (userRole === "DATA_OWNER" || userRole === "HR") {
+        return ResponseHelper.error("FORBIDDEN", "\u0E21\u0E35\u0E40\u0E09\u0E1E\u0E32\u0E30 Infection Control \u0E2B\u0E23\u0E37\u0E2D\u0E41\u0E1E\u0E17\u0E22\u0E4C\u0E17\u0E35\u0E48\u0E2A\u0E32\u0E21\u0E32\u0E23\u0E16\u0E25\u0E49\u0E32\u0E07\u0E41\u0E04\u0E0A\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14\u0E44\u0E14\u0E49", requestId, 403);
+      }
+      try {
+        this.aggregationService.refreshAllCaches();
+        return ResponseHelper.success({ message: "\u0E17\u0E33\u0E01\u0E32\u0E23\u0E25\u0E49\u0E32\u0E07\u0E41\u0E04\u0E0A\u0E41\u0E25\u0E30\u0E1B\u0E23\u0E30\u0E21\u0E27\u0E25\u0E1C\u0E25\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2A\u0E16\u0E34\u0E15\u0E34\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14\u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22\u0E41\u0E25\u0E49\u0E27" }, requestId);
+      } catch (err) {
+        return ResponseHelper.error("REFRESH_FAILED", err.message, requestId, 500);
+      }
+    }
+    /**
+     * Drill-down Detail Endpoint with Re-authorization Check!
+     */
+    getDrillDownDetail(userRole, userStaffId, payload, requestId) {
+      if (userRole === "DATA_OWNER") {
+        return ResponseHelper.error("FORBIDDEN", "\u0E44\u0E21\u0E48\u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15\u0E43\u0E2B\u0E49\u0E17\u0E33\u0E01\u0E32\u0E23 Drill-down \u0E14\u0E39\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23", requestId, 403);
+      }
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_STAFF_LIST", void 0, requestId);
+      if (!auth.isAuthorized) return auth.errorResponse;
+      const sampleDrillDownItems = [
+        { staffId: "ST8004", name: "\u0E1E\u0E27. \u0E2D\u0E32\u0E23\u0E35\u0E22\u0E32 \u0E2A\u0E38\u0E02\u0E1B\u0E23\u0E30\u0E40\u0E2A\u0E23\u0E34\u0E10", department: "ICU", status: (payload == null ? void 0 : payload.category) || "OVERDUE" },
+        { staffId: "ST8005", name: "\u0E19\u0E1E. \u0E27\u0E23\u0E40\u0E27\u0E0A \u0E23\u0E31\u0E15\u0E19\u0E08\u0E34\u0E19\u0E14\u0E32", department: "ER", status: (payload == null ? void 0 : payload.category) || "OVERDUE" }
+      ];
+      return ResponseHelper.success({ category: payload == null ? void 0 : payload.category, items: sampleDrillDownItems }, requestId);
+    }
+  };
+
+  // src/utils/AuditHashChain.ts
+  var AuditHashChain = class {
+    /**
+     * Computes SHA-256 Entry Hash for a single Audit Log row.
+     */
+    static computeEntryHash(entry) {
+      const rawString = [
+        entry.auditId,
+        entry.timestamp,
+        entry.actorStaffId,
+        entry.actorRole,
+        entry.action,
+        entry.entityType,
+        entry.entityId,
+        entry.requestId,
+        entry.oldValueHash,
+        entry.newValueHash,
+        entry.metadataJson,
+        String(entry.success),
+        entry.previousHash
+      ].join("|");
+      return CryptoService.computeSha256(rawString);
+    }
+    /**
+     * Scans and verifies Hash Chain integrity across an array of audit log entries.
+     * Returns verification result with tampered index if detected.
+     */
+    static verifyChain(logs) {
+      if (!logs || logs.length === 0) {
+        return { isValid: true };
+      }
+      let expectedPrevHash = this.GENESIS_PREVIOUS_HASH;
+      for (let i = 0; i < logs.length; i++) {
+        const log = logs[i];
+        if (i > 0) {
+          if (log.previousHash !== expectedPrevHash) {
+            return {
+              isValid: false,
+              tamperedIndex: i,
+              tamperedLogId: log.auditId
+            };
+          }
+        }
+        const recomputedHash = this.computeEntryHash({
+          auditId: log.auditId,
+          timestamp: log.timestamp,
+          actorStaffId: log.actorStaffId,
+          actorRole: log.actorRole,
+          action: log.action,
+          entityType: log.entityType,
+          entityId: log.entityId,
+          requestId: log.requestId,
+          oldValueHash: log.oldValueHash,
+          newValueHash: log.newValueHash,
+          metadataJson: log.metadataJson,
+          ipAddress: log.ipAddress,
+          userAgentHash: log.userAgentHash,
+          success: log.success,
+          failureReason: log.failureReason,
+          previousHash: log.previousHash
+        });
+        if (recomputedHash !== log.currentHash) {
+          return {
+            isValid: false,
+            tamperedIndex: i,
+            tamperedLogId: log.auditId
+          };
+        }
+        expectedPrevHash = log.currentHash;
+      }
+      return { isValid: true };
+    }
+  };
+  AuditHashChain.GENESIS_PREVIOUS_HASH = "0000000000000000000000000000000000000000000000000000000000000000";
+
+  // src/repositories/AuditRepository.ts
+  var AuditRepository = class {
+    constructor(sheetRepo) {
+      const auditSsId = PropertiesService.getScriptProperties().getProperty("DB_AUDIT_SPREADSHEET_ID");
+      this.sheetRepo = sheetRepo || new SheetRepository(auditSsId || void 0);
+    }
+    /**
+     * Appends a new Audit Log entry to AUDIT_LOG sheet using LockService.
+     * STRICT APPEND-ONLY: No update or delete operations allowed!
+     */
+    appendLog(entry) {
+      return this.sheetRepo.executeWithLock(() => {
+        const sheet = this.sheetRepo.getSheet("AUDIT_LOG");
+        const lastRow = sheet.getLastRow();
+        let previousHash = AuditHashChain.GENESIS_PREVIOUS_HASH;
+        if (lastRow > 1) {
+          previousHash = String(sheet.getRange(lastRow, 17).getValue());
+        }
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const auditId = `log-${Utilities.getUuid()}`;
+        const fullEntry = {
+          ...entry,
+          auditId,
+          timestamp: now,
+          previousHash,
+          currentHash: ""
+        };
+        const currentHash = AuditHashChain.computeEntryHash(fullEntry);
+        fullEntry.currentHash = currentHash;
+        const headers = [
+          "AuditID",
+          "Timestamp",
+          "ActorStaffID",
+          "ActorRole",
+          "Action",
+          "EntityType",
+          "EntityID",
+          "RequestID",
+          "OldValueHash",
+          "NewValueHash",
+          "MetadataJSON",
+          "IPAddress",
+          "UserAgentHash",
+          "Success",
+          "FailureReason",
+          "PreviousHash",
+          "CurrentHash"
+        ];
+        const rowObj = {
+          AuditID: fullEntry.auditId,
+          Timestamp: fullEntry.timestamp,
+          ActorStaffID: fullEntry.actorStaffId,
+          ActorRole: fullEntry.actorRole,
+          Action: fullEntry.action,
+          EntityType: fullEntry.entityType,
+          EntityID: fullEntry.entityId,
+          RequestID: fullEntry.requestId,
+          OldValueHash: fullEntry.oldValueHash,
+          NewValueHash: fullEntry.newValueHash,
+          MetadataJSON: fullEntry.metadataJson,
+          IPAddress: fullEntry.ipAddress,
+          UserAgentHash: fullEntry.userAgentHash,
+          Success: fullEntry.success,
+          FailureReason: fullEntry.failureReason,
+          PreviousHash: fullEntry.previousHash,
+          CurrentHash: fullEntry.currentHash
+        };
+        this.sheetRepo.appendRow("AUDIT_LOG", headers, rowObj);
+        return fullEntry;
+      });
+    }
+    /**
+     * Reads all audit log entries for verification scanning.
+     */
+    findAllLogs() {
+      const rows = this.sheetRepo.getRows("AUDIT_LOG");
+      return rows.map((r) => ({
+        auditId: String(r.AuditID || r.LogUUID),
+        timestamp: String(r.Timestamp),
+        actorStaffId: String(r.ActorStaffID || r.StaffID),
+        actorRole: r.ActorRole || r.RoleCode,
+        action: String(r.Action),
+        entityType: String(r.EntityType || r.TargetResource || "System"),
+        entityId: String(r.EntityID || ""),
+        requestId: String(r.RequestID || ""),
+        oldValueHash: String(r.OldValueHash || "0000000000000000000000000000000000000000000000000000000000000000"),
+        newValueHash: String(r.NewValueHash || "0000000000000000000000000000000000000000000000000000000000000000"),
+        metadataJson: String(r.MetadataJSON || r.DetailsJson || "{}"),
+        ipAddress: String(r.IPAddress || ""),
+        userAgentHash: String(r.UserAgentHash || ""),
+        success: r.Success !== false && String(r.Success) !== "FALSE",
+        failureReason: String(r.FailureReason || ""),
+        previousHash: String(r.PreviousHash),
+        currentHash: String(r.CurrentHash || r.EntryHash)
+      }));
+    }
+  };
+
+  // src/utils/AuditRedactionUtility.ts
+  var AuditRedactionUtility = class {
+    /**
+     * Redacts sensitive properties from metadata object before audit logging.
+     */
+    static redactObject(obj) {
+      if (!obj || typeof obj !== "object") {
+        return obj;
+      }
+      if (Array.isArray(obj)) {
+        return obj.map((item) => this.redactObject(item));
+      }
+      const redacted = {};
+      Object.keys(obj).forEach((key) => {
+        const lowerKey = key.toLowerCase();
+        if (this.SENSITIVE_KEYS.some((sensitive) => lowerKey.includes(sensitive))) {
+          redacted[key] = this.REDACTED_VALUE;
+        } else if (typeof obj[key] === "object" && obj[key] !== null) {
+          redacted[key] = this.redactObject(obj[key]);
+        } else {
+          redacted[key] = obj[key];
+        }
+      });
+      return redacted;
+    }
+    /**
+     * Redacts metadata object and converts to clean JSON string.
+     */
+    static redactToJson(obj) {
+      const cleanObj = this.redactObject(obj || {});
+      return JSON.stringify(cleanObj);
+    }
+  };
+  AuditRedactionUtility.REDACTED_VALUE = "[REDACTED]";
+  AuditRedactionUtility.SENSITIVE_KEYS = [
+    "password",
+    "pwd",
+    "oldpassword",
+    "newpassword",
+    "salt",
+    "passwordsalt",
+    "token",
+    "tokenhash",
+    "sessiontoken",
+    "authorization",
+    "bearer",
+    "secret"
+  ];
+
+  // src/services/AuditService.ts
+  var AuditService = class {
+    constructor(repo) {
+      this.repo = repo || new AuditRepository();
+    }
+    /**
+     * General Audit Event Logger with automatic data redaction.
+     */
+    logEvent(actorStaffId, actorRole, action, entityType, entityId, requestId, metadataObj = {}, success = true, failureReason = "", oldValue = "", newValue = "") {
+      const sanitizedJson = AuditRedactionUtility.redactToJson(metadataObj);
+      const oldValueHash = oldValue ? CryptoService.computeSha256(oldValue) : "0000000000000000000000000000000000000000000000000000000000000000";
+      const newValueHash = newValue ? CryptoService.computeSha256(newValue) : "0000000000000000000000000000000000000000000000000000000000000000";
+      return this.repo.appendLog({
+        actorStaffId,
+        actorRole,
+        action,
+        entityType,
+        entityId,
+        requestId,
+        oldValueHash,
+        newValueHash,
+        metadataJson: sanitizedJson,
+        ipAddress: metadataObj.ipAddress || "10.20.4.12",
+        userAgentHash: metadataObj.userAgent ? CryptoService.computeSha256(metadataObj.userAgent) : "0000000000000000000000000000000000000000000000000000000000000000",
+        success,
+        failureReason
+      });
+    }
+    /**
+     * Scans and verifies Hash Chain integrity across the entire AUDIT_LOG sheet.
+     */
+    verifyAuditChain(verifiedBy) {
+      const logs = this.repo.findAllLogs();
+      const result = AuditHashChain.verifyChain(logs);
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      if (!result.isValid) {
+        return {
+          totalLogsScanned: logs.length,
+          isChainValid: false,
+          tamperedLogIndex: result.tamperedIndex,
+          tamperedLogId: result.tamperedLogId,
+          verificationTimestamp: now,
+          verifiedBy,
+          summaryMessage: `\u26A0\uFE0F WARNING: Cryptographic Hash Chain Tampering Detected at Row ${result.tamperedIndex + 1} (AuditID: ${result.tamperedLogId})`
+        };
+      }
+      return {
+        totalLogsScanned: logs.length,
+        isChainValid: true,
+        verificationTimestamp: now,
+        verifiedBy,
+        summaryMessage: `\u2705 SUCCESS: All ${logs.length} Cryptographic Audit Logs verified cleanly with unbroken Hash Chain integrity.`
+      };
+    }
+  };
+
+  // src/controllers/AuditController.ts
+  var AuditController = class {
+    constructor(service) {
+      this.service = service || new AuditService();
+    }
+    /**
+     * Fetches audit logs (Infection Control only).
+     */
+    getAuditLogs(userRole, userStaffId, requestId) {
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_AUDIT_LOGS", void 0, requestId);
+      if (!auth.isAuthorized) return auth.errorResponse;
+      try {
+        const verificationReport = this.service.verifyAuditChain(userStaffId);
+        return ResponseHelper.success(verificationReport, requestId);
+      } catch (err) {
+        return ResponseHelper.error("AUDIT_ERROR", err.message, requestId, 500);
+      }
+    }
+    /**
+     * Triggers full table Cryptographic Hash Chain verification scan.
+     */
+    verifyAuditChainIntegrity(userRole, userStaffId, requestId) {
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_AUDIT_LOGS", void 0, requestId);
+      if (!auth.isAuthorized) return auth.errorResponse;
+      try {
+        const report = this.service.verifyAuditChain(userStaffId);
+        return ResponseHelper.success(report, requestId);
+      } catch (err) {
+        return ResponseHelper.error("VERIFICATION_FAILED", err.message, requestId, 500);
+      }
+    }
+  };
+
   // src/setup/setupDatabase.ts
   var SCHEMA_MIGRATION_VERSION = "1.0.0";
   var CLINICAL_DATABASE_CONFIG = {
@@ -2085,14 +2788,43 @@ var GASApp = (() => {
   };
   function setupAllDatabases() {
     const props = PropertiesService.getScriptProperties();
+    const TARGET_FOLDER_ID = "1lQBZKII-qH2lPonIyijNy5RXaaos9OQk";
+    props.setProperty("DB_SECURITY_SPREADSHEET_ID", "1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8");
     [CLINICAL_DATABASE_CONFIG, SECURITY_DATABASE_CONFIG, AUDIT_DATABASE_CONFIG].forEach((config) => {
-      let ss;
-      const existingId = props.getProperty(config.propertyKey);
+      let ss = null;
+      let existingId = props.getProperty(config.propertyKey);
+      if (config.propertyKey === "DB_SECURITY_SPREADSHEET_ID") {
+        existingId = "1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8";
+      }
       if (existingId) {
-        ss = SpreadsheetApp.openById(existingId);
-      } else {
-        ss = SpreadsheetApp.create(config.spreadsheetTitle);
-        props.setProperty(config.propertyKey, ss.getId());
+        try {
+          ss = SpreadsheetApp.openById(existingId);
+        } catch (e) {
+          existingId = null;
+        }
+      }
+      if (!ss) {
+        try {
+          const folder = DriveApp.getFolderById(TARGET_FOLDER_ID);
+          const files = folder.getFilesByName(config.spreadsheetTitle);
+          if (files.hasNext()) {
+            const file = files.next();
+            ss = SpreadsheetApp.openById(file.getId());
+            props.setProperty(config.propertyKey, file.getId());
+          } else {
+            ss = SpreadsheetApp.create(config.spreadsheetTitle);
+            props.setProperty(config.propertyKey, ss.getId());
+            const file = DriveApp.getFileById(ss.getId());
+            folder.addFile(file);
+            try {
+              DriveApp.getRootFolder().removeFile(file);
+            } catch (e) {
+            }
+          }
+        } catch (err) {
+          ss = SpreadsheetApp.create(config.spreadsheetTitle);
+          props.setProperty(config.propertyKey, ss.getId());
+        }
       }
       config.sheets.forEach((sheetCfg) => {
         let sheet = ss.getSheetByName(sheetCfg.name);
@@ -2206,555 +2938,6 @@ var GASApp = (() => {
     }
   }
 
-  // src/repositories/DashboardCacheRepository.ts
-  var DashboardCacheRepository = class {
-    constructor(sheetRepo) {
-      const auditSsId = PropertiesService.getScriptProperties().getProperty("DB_AUDIT_SPREADSHEET_ID");
-      this.sheetRepo = sheetRepo || new SheetRepository(auditSsId || void 0);
-    }
-    /**
-     * Retrieves valid non-expired dashboard cache record from DASHBOARD_CACHE sheet.
-     */
-    getValidCache(cacheKey) {
-      const rows = this.sheetRepo.getRows("DASHBOARD_CACHE");
-      const now = (/* @__PURE__ */ new Date()).toISOString();
-      const match = rows.find((r) => String(r.CacheKey) === cacheKey && String(r.ExpiresAt) > now && (!r.IsDeleted || String(r.IsDeleted) === "FALSE"));
-      if (!match) return null;
-      return {
-        cacheUuid: String(match.CacheUUID),
-        cacheKey: String(match.CacheKey),
-        cachedDataJson: String(match.CachedDataJson),
-        calculatedAt: String(match.CalculatedAt),
-        expiresAt: String(match.ExpiresAt)
-      };
-    }
-    /**
-     * Saves or updates dashboard cache in DASHBOARD_CACHE sheet using LockService.
-     */
-    saveCache(cacheKey, dataObj, ttlMinutes = 30) {
-      this.sheetRepo.executeWithLock(() => {
-        const now = /* @__PURE__ */ new Date();
-        const expiresAt = new Date(now.getTime() + ttlMinutes * 60 * 1e3).toISOString();
-        const calculatedAt = now.toISOString();
-        const existing = this.getValidCache(cacheKey);
-        if (existing) {
-          this.sheetRepo.updateRow("DASHBOARD_CACHE", "CacheKey", cacheKey, {
-            CachedDataJson: JSON.stringify(dataObj),
-            CalculatedAt: calculatedAt,
-            ExpiresAt: expiresAt,
-            UpdatedAt: calculatedAt
-          });
-        } else {
-          const headers = [
-            "CacheUUID",
-            "CacheKey",
-            "CachedDataJson",
-            "CalculatedAt",
-            "ExpiresAt",
-            "CreatedAt",
-            "CreatedBy",
-            "UpdatedAt",
-            "UpdatedBy",
-            "RecordVersion",
-            "IsDeleted"
-          ];
-          this.sheetRepo.appendRow("DASHBOARD_CACHE", headers, {
-            CacheUUID: `cache-${CryptoService.generateUuid()}`,
-            CacheKey: cacheKey,
-            CachedDataJson: JSON.stringify(dataObj),
-            CalculatedAt: calculatedAt,
-            ExpiresAt: expiresAt,
-            CreatedAt: calculatedAt,
-            CreatedBy: "SYSTEM",
-            UpdatedAt: calculatedAt,
-            UpdatedBy: "SYSTEM",
-            RecordVersion: 1,
-            IsDeleted: false
-          });
-        }
-      });
-    }
-    /**
-     * Invalidates a specific cache key.
-     */
-    invalidateCache(cacheKey) {
-      this.sheetRepo.executeWithLock(() => {
-        this.sheetRepo.updateRow("DASHBOARD_CACHE", "CacheKey", cacheKey, {
-          ExpiresAt: "2000-01-01T00:00:00Z",
-          UpdatedAt: (/* @__PURE__ */ new Date()).toISOString()
-        });
-      });
-    }
-  };
-
-  // src/utils/FieldMaskingUtil.ts
-  var FieldMaskingUtil = class {
-    /**
-     * Masks sensitive clinical fields if user role is HR.
-     */
-    static maskHealthRecord(record, userRole) {
-      if (userRole !== "HR") {
-        return record;
-      }
-      const maskedRecord = { ...record };
-      if (maskedRecord.QuantitativeValue !== void 0) {
-        maskedRecord.QuantitativeValue = this.MASKED_PLACEHOLDER;
-      }
-      if (maskedRecord.NumericValue !== void 0) {
-        maskedRecord.NumericValue = this.MASKED_PLACEHOLDER;
-      }
-      if (maskedRecord.RadiologistImpression !== void 0) {
-        maskedRecord.RadiologistImpression = this.MASKED_PLACEHOLDER;
-      }
-      if (maskedRecord.ClinicalNotes !== void 0) {
-        maskedRecord.ClinicalNotes = this.MASKED_PLACEHOLDER;
-      }
-      if (maskedRecord.OverrideReason !== void 0) {
-        maskedRecord.OverrideReason = this.MASKED_PLACEHOLDER;
-      }
-      if (maskedRecord.ExemptionCategory !== void 0) {
-        maskedRecord.ExemptionCategory = this.MASKED_PLACEHOLDER;
-      }
-      if (maskedRecord.RejectionReason !== void 0) {
-        maskedRecord.RejectionReason = this.MASKED_PLACEHOLDER;
-      }
-      return maskedRecord;
-    }
-    /**
-     * Masks an array of health records for HR.
-     */
-    static maskHealthRecords(records, userRole) {
-      return records.map((r) => this.maskHealthRecord(r, userRole));
-    }
-  };
-  FieldMaskingUtil.MASKED_PLACEHOLDER = "[RESTRICTED_HR_MASKED]";
-
-  // src/services/DashboardAggregationService.ts
-  var DashboardAggregationService = class {
-    constructor(cacheRepo, staffRepo, clinicalRepo) {
-      this.cacheRepo = cacheRepo || new DashboardCacheRepository();
-      this.staffRepo = staffRepo || new StaffRepository();
-      this.clinicalRepo = clinicalRepo || new ClinicalRepository();
-    }
-    /**
-     * Completeness Dashboard Aggregation with 2-tier Caching (RAM CacheService -> DB DASHBOARD_CACHE).
-     */
-    getCompletenessDashboard(userRole, forceRefresh = false) {
-      const cacheKey = "DASHBOARD_COMPLETENESS_SUMMARY";
-      if (!forceRefresh) {
-        const ramCache = CacheService.getScriptCache().get(cacheKey);
-        if (ramCache) {
-          return this.applyRoleMasking(JSON.parse(ramCache), userRole);
-        }
-        const dbCache = this.cacheRepo.getValidCache(cacheKey);
-        if (dbCache) {
-          CacheService.getScriptCache().put(cacheKey, dbCache.cachedDataJson, 1800);
-          return this.applyRoleMasking(JSON.parse(dbCache.cachedDataJson), userRole);
-        }
-      }
-      const staffList = this.staffRepo.findAll(false);
-      const totalStaff = staffList.length;
-      let completeCount = 0;
-      const workGroupBreakdown = {
-        CLINICAL: { total: 0, complete: 0, rate: 0 },
-        FRONTLINE: { total: 0, complete: 0, rate: 0 },
-        BACKOFFICE: { total: 0, complete: 0, rate: 0 }
-      };
-      const departmentBreakdown = {};
-      staffList.forEach((staff) => {
-        const wg = staff.WorkGroup || "BACKOFFICE";
-        const dept = staff.DepartmentCode || "OTHER";
-        if (!workGroupBreakdown[wg]) workGroupBreakdown[wg] = { total: 0, complete: 0, rate: 0 };
-        if (!departmentBreakdown[dept]) departmentBreakdown[dept] = { total: 0, complete: 0, rate: 0 };
-        workGroupBreakdown[wg].total++;
-        departmentBreakdown[dept].total++;
-        const vacs = this.clinicalRepo.findVaccinationsByStaffId(staff.StaffID);
-        const isComplete = vacs.length >= 2;
-        if (isComplete) {
-          completeCount++;
-          workGroupBreakdown[wg].complete++;
-          departmentBreakdown[dept].complete++;
-        }
-      });
-      Object.keys(workGroupBreakdown).forEach((k) => {
-        const g = workGroupBreakdown[k];
-        g.rate = g.total > 0 ? Math.round(g.complete / g.total * 100) : 0;
-      });
-      Object.keys(departmentBreakdown).forEach((k) => {
-        const d = departmentBreakdown[k];
-        d.rate = d.total > 0 ? Math.round(d.complete / d.total * 100) : 0;
-      });
-      const completionRate = totalStaff > 0 ? Math.round(completeCount / totalStaff * 100) : 0;
-      const dataObj = {
-        totalStaff,
-        completeCount,
-        incompleteCount: totalStaff - completeCount,
-        completionRate,
-        workGroupBreakdown,
-        departmentBreakdown,
-        pendingVerificationQueue: 14,
-        calculatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      this.cacheRepo.saveCache(cacheKey, dataObj, 30);
-      CacheService.getScriptCache().put(cacheKey, JSON.stringify(dataObj), 1800);
-      return this.applyRoleMasking(dataObj, userRole);
-    }
-    /**
-     * Follow-up Dashboard Aggregation.
-     */
-    getFollowUpDashboard(userRole, forceRefresh = false) {
-      const cacheKey = "DASHBOARD_FOLLOWUP_SUMMARY";
-      if (!forceRefresh) {
-        const ramCache = CacheService.getScriptCache().get(cacheKey);
-        if (ramCache) {
-          return this.applyRoleMasking(JSON.parse(ramCache), userRole);
-        }
-      }
-      const dataObj = {
-        vaccineRequired: 42,
-        labRequired: 18,
-        cxrRequired: 12,
-        physicianReviewRequired: 5,
-        overdueCount: 15,
-        dueWithin7Days: 8,
-        dueWithin30Days: 24,
-        dueWithin60Days: 30,
-        rejectedEvidenceCount: 3,
-        emailFailedCount: 1,
-        calculatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      this.cacheRepo.saveCache(cacheKey, dataObj, 30);
-      CacheService.getScriptCache().put(cacheKey, JSON.stringify(dataObj), 1800);
-      return this.applyRoleMasking(dataObj, userRole);
-    }
-    /**
-     * Progress Dashboard Aggregation.
-     */
-    getProgressDashboard(userRole, forceRefresh = false) {
-      const cacheKey = "DASHBOARD_PROGRESS_SUMMARY";
-      if (!forceRefresh) {
-        const ramCache = CacheService.getScriptCache().get(cacheKey);
-        if (ramCache) {
-          return this.applyRoleMasking(JSON.parse(ramCache), userRole);
-        }
-      }
-      const dataObj = {
-        completionTrend: [
-          { month: "Jan", rate: 65 },
-          { month: "Feb", rate: 72 },
-          { month: "Mar", rate: 78 },
-          { month: "Apr", rate: 84 },
-          { month: "May", rate: 89 },
-          { month: "Jun", rate: 93 }
-        ],
-        completedActionsThisMonth: 128,
-        newActionsThisMonth: 15,
-        overdueTrendCount: 8,
-        calculatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      this.cacheRepo.saveCache(cacheKey, dataObj, 30);
-      CacheService.getScriptCache().put(cacheKey, JSON.stringify(dataObj), 1800);
-      return this.applyRoleMasking(dataObj, userRole);
-    }
-    /**
-     * Manual Cache Refresh Trigger.
-     */
-    refreshAllCaches() {
-      CacheService.getScriptCache().removeAll([
-        "DASHBOARD_COMPLETENESS_SUMMARY",
-        "DASHBOARD_FOLLOWUP_SUMMARY",
-        "DASHBOARD_PROGRESS_SUMMARY"
-      ]);
-      this.cacheRepo.invalidateCache("DASHBOARD_COMPLETENESS_SUMMARY");
-      this.cacheRepo.invalidateCache("DASHBOARD_FOLLOWUP_SUMMARY");
-      this.cacheRepo.invalidateCache("DASHBOARD_PROGRESS_SUMMARY");
-    }
-    applyRoleMasking(dataObj, userRole) {
-      if (userRole === "HR") {
-        return FieldMaskingUtil.maskHealthRecord(dataObj, "HR");
-      }
-      return dataObj;
-    }
-  };
-
-  // src/utils/AuditHashChain.ts
-  var AuditHashChain = class {
-    /**
-     * Computes SHA-256 Entry Hash for a single Audit Log row.
-     */
-    static computeEntryHash(entry) {
-      const rawString = [
-        entry.auditId,
-        entry.timestamp,
-        entry.actorStaffId,
-        entry.actorRole,
-        entry.action,
-        entry.entityType,
-        entry.entityId,
-        entry.requestId,
-        entry.oldValueHash,
-        entry.newValueHash,
-        entry.metadataJson,
-        String(entry.success),
-        entry.previousHash
-      ].join("|");
-      return CryptoService.computeSha256(rawString);
-    }
-    /**
-     * Scans and verifies Hash Chain integrity across an array of audit log entries.
-     * Returns verification result with tampered index if detected.
-     */
-    static verifyChain(logs) {
-      if (!logs || logs.length === 0) {
-        return { isValid: true };
-      }
-      let expectedPrevHash = this.GENESIS_PREVIOUS_HASH;
-      for (let i = 0; i < logs.length; i++) {
-        const log = logs[i];
-        if (i > 0) {
-          if (log.previousHash !== expectedPrevHash) {
-            return {
-              isValid: false,
-              tamperedIndex: i,
-              tamperedLogId: log.auditId
-            };
-          }
-        }
-        const recomputedHash = this.computeEntryHash({
-          auditId: log.auditId,
-          timestamp: log.timestamp,
-          actorStaffId: log.actorStaffId,
-          actorRole: log.actorRole,
-          action: log.action,
-          entityType: log.entityType,
-          entityId: log.entityId,
-          requestId: log.requestId,
-          oldValueHash: log.oldValueHash,
-          newValueHash: log.newValueHash,
-          metadataJson: log.metadataJson,
-          ipAddress: log.ipAddress,
-          userAgentHash: log.userAgentHash,
-          success: log.success,
-          failureReason: log.failureReason,
-          previousHash: log.previousHash
-        });
-        if (recomputedHash !== log.currentHash) {
-          return {
-            isValid: false,
-            tamperedIndex: i,
-            tamperedLogId: log.auditId
-          };
-        }
-        expectedPrevHash = log.currentHash;
-      }
-      return { isValid: true };
-    }
-  };
-  AuditHashChain.GENESIS_PREVIOUS_HASH = "0000000000000000000000000000000000000000000000000000000000000000";
-
-  // src/repositories/AuditRepository.ts
-  var AuditRepository = class {
-    constructor(sheetRepo) {
-      const auditSsId = PropertiesService.getScriptProperties().getProperty("DB_AUDIT_SPREADSHEET_ID");
-      this.sheetRepo = sheetRepo || new SheetRepository(auditSsId || void 0);
-    }
-    /**
-     * Appends a new Audit Log entry to AUDIT_LOG sheet using LockService.
-     * STRICT APPEND-ONLY: No update or delete operations allowed!
-     */
-    appendLog(entry) {
-      return this.sheetRepo.executeWithLock(() => {
-        const sheet = this.sheetRepo.getSheet("AUDIT_LOG");
-        const lastRow = sheet.getLastRow();
-        let previousHash = AuditHashChain.GENESIS_PREVIOUS_HASH;
-        if (lastRow > 1) {
-          previousHash = String(sheet.getRange(lastRow, 17).getValue());
-        }
-        const now = (/* @__PURE__ */ new Date()).toISOString();
-        const auditId = `log-${Utilities.getUuid()}`;
-        const fullEntry = {
-          ...entry,
-          auditId,
-          timestamp: now,
-          previousHash,
-          currentHash: ""
-        };
-        const currentHash = AuditHashChain.computeEntryHash(fullEntry);
-        fullEntry.currentHash = currentHash;
-        const headers = [
-          "AuditID",
-          "Timestamp",
-          "ActorStaffID",
-          "ActorRole",
-          "Action",
-          "EntityType",
-          "EntityID",
-          "RequestID",
-          "OldValueHash",
-          "NewValueHash",
-          "MetadataJSON",
-          "IPAddress",
-          "UserAgentHash",
-          "Success",
-          "FailureReason",
-          "PreviousHash",
-          "CurrentHash"
-        ];
-        const rowObj = {
-          AuditID: fullEntry.auditId,
-          Timestamp: fullEntry.timestamp,
-          ActorStaffID: fullEntry.actorStaffId,
-          ActorRole: fullEntry.actorRole,
-          Action: fullEntry.action,
-          EntityType: fullEntry.entityType,
-          EntityID: fullEntry.entityId,
-          RequestID: fullEntry.requestId,
-          OldValueHash: fullEntry.oldValueHash,
-          NewValueHash: fullEntry.newValueHash,
-          MetadataJSON: fullEntry.metadataJson,
-          IPAddress: fullEntry.ipAddress,
-          UserAgentHash: fullEntry.userAgentHash,
-          Success: fullEntry.success,
-          FailureReason: fullEntry.failureReason,
-          PreviousHash: fullEntry.previousHash,
-          CurrentHash: fullEntry.currentHash
-        };
-        this.sheetRepo.appendRow("AUDIT_LOG", headers, rowObj);
-        return fullEntry;
-      });
-    }
-    /**
-     * Reads all audit log entries for verification scanning.
-     */
-    findAllLogs() {
-      const rows = this.sheetRepo.getRows("AUDIT_LOG");
-      return rows.map((r) => ({
-        auditId: String(r.AuditID || r.LogUUID),
-        timestamp: String(r.Timestamp),
-        actorStaffId: String(r.ActorStaffID || r.StaffID),
-        actorRole: r.ActorRole || r.RoleCode,
-        action: String(r.Action),
-        entityType: String(r.EntityType || r.TargetResource || "System"),
-        entityId: String(r.EntityID || ""),
-        requestId: String(r.RequestID || ""),
-        oldValueHash: String(r.OldValueHash || "0000000000000000000000000000000000000000000000000000000000000000"),
-        newValueHash: String(r.NewValueHash || "0000000000000000000000000000000000000000000000000000000000000000"),
-        metadataJson: String(r.MetadataJSON || r.DetailsJson || "{}"),
-        ipAddress: String(r.IPAddress || ""),
-        userAgentHash: String(r.UserAgentHash || ""),
-        success: r.Success !== false && String(r.Success) !== "FALSE",
-        failureReason: String(r.FailureReason || ""),
-        previousHash: String(r.PreviousHash),
-        currentHash: String(r.CurrentHash || r.EntryHash)
-      }));
-    }
-  };
-
-  // src/utils/AuditRedactionUtility.ts
-  var AuditRedactionUtility = class {
-    /**
-     * Redacts sensitive properties from metadata object before audit logging.
-     */
-    static redactObject(obj) {
-      if (!obj || typeof obj !== "object") {
-        return obj;
-      }
-      if (Array.isArray(obj)) {
-        return obj.map((item) => this.redactObject(item));
-      }
-      const redacted = {};
-      Object.keys(obj).forEach((key) => {
-        const lowerKey = key.toLowerCase();
-        if (this.SENSITIVE_KEYS.some((sensitive) => lowerKey.includes(sensitive))) {
-          redacted[key] = this.REDACTED_VALUE;
-        } else if (typeof obj[key] === "object" && obj[key] !== null) {
-          redacted[key] = this.redactObject(obj[key]);
-        } else {
-          redacted[key] = obj[key];
-        }
-      });
-      return redacted;
-    }
-    /**
-     * Redacts metadata object and converts to clean JSON string.
-     */
-    static redactToJson(obj) {
-      const cleanObj = this.redactObject(obj || {});
-      return JSON.stringify(cleanObj);
-    }
-  };
-  AuditRedactionUtility.REDACTED_VALUE = "[REDACTED]";
-  AuditRedactionUtility.SENSITIVE_KEYS = [
-    "password",
-    "pwd",
-    "oldpassword",
-    "newpassword",
-    "salt",
-    "passwordsalt",
-    "token",
-    "tokenhash",
-    "sessiontoken",
-    "authorization",
-    "bearer",
-    "secret"
-  ];
-
-  // src/services/AuditService.ts
-  var AuditService = class {
-    constructor(repo) {
-      this.repo = repo || new AuditRepository();
-    }
-    /**
-     * General Audit Event Logger with automatic data redaction.
-     */
-    logEvent(actorStaffId, actorRole, action, entityType, entityId, requestId, metadataObj = {}, success = true, failureReason = "", oldValue = "", newValue = "") {
-      const sanitizedJson = AuditRedactionUtility.redactToJson(metadataObj);
-      const oldValueHash = oldValue ? CryptoService.computeSha256(oldValue) : "0000000000000000000000000000000000000000000000000000000000000000";
-      const newValueHash = newValue ? CryptoService.computeSha256(newValue) : "0000000000000000000000000000000000000000000000000000000000000000";
-      return this.repo.appendLog({
-        actorStaffId,
-        actorRole,
-        action,
-        entityType,
-        entityId,
-        requestId,
-        oldValueHash,
-        newValueHash,
-        metadataJson: sanitizedJson,
-        ipAddress: metadataObj.ipAddress || "10.20.4.12",
-        userAgentHash: metadataObj.userAgent ? CryptoService.computeSha256(metadataObj.userAgent) : "0000000000000000000000000000000000000000000000000000000000000000",
-        success,
-        failureReason
-      });
-    }
-    /**
-     * Scans and verifies Hash Chain integrity across the entire AUDIT_LOG sheet.
-     */
-    verifyAuditChain(verifiedBy) {
-      const logs = this.repo.findAllLogs();
-      const result = AuditHashChain.verifyChain(logs);
-      const now = (/* @__PURE__ */ new Date()).toISOString();
-      if (!result.isValid) {
-        return {
-          totalLogsScanned: logs.length,
-          isChainValid: false,
-          tamperedLogIndex: result.tamperedIndex,
-          tamperedLogId: result.tamperedLogId,
-          verificationTimestamp: now,
-          verifiedBy,
-          summaryMessage: `\u26A0\uFE0F WARNING: Cryptographic Hash Chain Tampering Detected at Row ${result.tamperedIndex + 1} (AuditID: ${result.tamperedLogId})`
-        };
-      }
-      return {
-        totalLogsScanned: logs.length,
-        isChainValid: true,
-        verificationTimestamp: now,
-        verifiedBy,
-        summaryMessage: `\u2705 SUCCESS: All ${logs.length} Cryptographic Audit Logs verified cleanly with unbroken Hash Chain integrity.`
-      };
-    }
-  };
-
   // src/index.ts
   function doGet(e) {
     var _a;
@@ -2793,6 +2976,8 @@ var GASApp = (() => {
       const authCtrl = new AuthController();
       const staffCtrl = new StaffController();
       const clinicalCtrl = new ClinicalController();
+      const auditCtrl = new AuditController();
+      const dashCtrl = new DashboardController();
       switch (action) {
         case "login":
           return authCtrl.login(payload.staffId, payload.password, requestId);
@@ -2804,6 +2989,18 @@ var GASApp = (() => {
           return staffCtrl.createStaff(role, staffId, payload.staffData, requestId);
         case "getHealthRecords":
           return clinicalCtrl.getVaccinations(role, staffId, payload.targetStaffId || staffId, requestId);
+        case "getAuditLogs":
+          return auditCtrl.getAuditLogs(role, staffId, requestId);
+        case "getCompletenessDashboard":
+          return dashCtrl.getCompletenessDashboard(role, staffId, requestId);
+        case "getFollowUpDashboard":
+          return dashCtrl.getFollowUpDashboard(role, staffId, requestId);
+        case "getProgressDashboard":
+          return dashCtrl.getProgressDashboard(role, staffId, requestId);
+        case "refreshDashboardCache":
+          return dashCtrl.refreshDashboardCache(role, staffId, requestId);
+        case "getDrillDownDetail":
+          return dashCtrl.getDrillDownDetail(role, staffId, payload.category || "", requestId);
         default:
           return ResponseHelper.error("UNKNOWN_ACTION", `Action '${action}' is not recognized.`, requestId, 404);
       }

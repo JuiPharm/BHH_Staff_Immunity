@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Dialog, DialogTitle, DialogContent, DialogActions, Button, Typography, Box, Alert, CircularProgress, LinearProgress } from '@mui/material';
 import { UploadCloud } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { downloadStaffMasterTemplate, downloadVaccinationTemplate, downloadLabScreeningTemplate } from '../../utils/templateGenerator';
+import { Download } from 'lucide-react';
 import { bdmsColors } from '../../theme/bdmsTheme';
 import { apiService } from '../../services/api';
 
@@ -60,13 +62,31 @@ export const ImportModal: React.FC<ImportModalProps> = ({ open, onClose, onImpor
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle sx={{ fontWeight: 700, color: bdmsColors.navy }}>
-        📥 นำเข้าข้อมูล Staff Master (Import Excel/CSV)
+        📥 นำเข้าข้อมูลและดาวน์โหลด Template (Import & Templates)
       </DialogTitle>
       <DialogContent>
+        {/* Template Download Section */}
+        <Box sx={{ mb: 3, p: 2, bgcolor: '#F8FAFC', borderRadius: 2, border: `1px solid ${bdmsColors.border}` }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, color: bdmsColors.navy, mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Download size={16} /> ดาวน์โหลดแม่แบบไฟล์ Excel (Download Import Templates):
+          </Typography>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+            <Button size="small" variant="outlined" color="primary" onClick={downloadStaffMasterTemplate}>
+              📄 Template Staff Master
+            </Button>
+            <Button size="small" variant="outlined" color="secondary" onClick={downloadVaccinationTemplate}>
+              💉 Template ประวัติวัคซีน
+            </Button>
+            <Button size="small" variant="outlined" color="info" onClick={downloadLabScreeningTemplate}>
+              🧪 Template ผลแล็บ/ภูมิคุ้มกัน
+            </Button>
+          </Box>
+        </Box>
+
         <Typography variant="body2" sx={{ color: bdmsColors.textSecondary, mb: 2 }}>
-          อัปโหลดไฟล์รายชื่อบุคลากร (รองรับ XLSX และ CSV) เพื่ออัปเดต Staff Master ในระบบ
+          เลือกอัปโหลดไฟล์ Excel / CSV ที่กรอกข้อมูลตามรูปแบบด้านบนเพื่อนำเข้าสู่ระบบ:
         </Typography>
 
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}

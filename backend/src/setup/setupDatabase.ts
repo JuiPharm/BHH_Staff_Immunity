@@ -217,19 +217,46 @@ export const AUDIT_DATABASE_CONFIG: DatabaseConfig = {
  */
 export function setupAllDatabases(): void {
   const props = PropertiesService.getScriptProperties();
+  const TARGET_FOLDER_ID = '1lQBZKII-qH2lPonIyijNy5RXaaos9OQk';
 
   // Force Security DB to use user-specified Sheet ID
   props.setProperty('DB_SECURITY_SPREADSHEET_ID', '1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8');
 
   [CLINICAL_DATABASE_CONFIG, SECURITY_DATABASE_CONFIG, AUDIT_DATABASE_CONFIG].forEach((config) => {
-    let ss: GoogleAppsScript.Spreadsheet.Spreadsheet;
-    const existingId = props.getProperty(config.propertyKey);
+    let ss: GoogleAppsScript.Spreadsheet.Spreadsheet | null = null;
+    let existingId = props.getProperty(config.propertyKey);
+
+    if (config.propertyKey === 'DB_SECURITY_SPREADSHEET_ID') {
+      existingId = '1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8';
+    }
 
     if (existingId) {
-      ss = SpreadsheetApp.openById(existingId);
-    } else {
-      ss = SpreadsheetApp.create(config.spreadsheetTitle);
-      props.setProperty(config.propertyKey, ss.getId());
+      try {
+        ss = SpreadsheetApp.openById(existingId);
+      } catch (e) {
+        existingId = null;
+      }
+    }
+
+    if (!ss) {
+      try {
+        const folder = DriveApp.getFolderById(TARGET_FOLDER_ID);
+        const files = folder.getFilesByName(config.spreadsheetTitle);
+        if (files.hasNext()) {
+          const file = files.next();
+          ss = SpreadsheetApp.openById(file.getId());
+          props.setProperty(config.propertyKey, file.getId());
+        } else {
+          ss = SpreadsheetApp.create(config.spreadsheetTitle);
+          props.setProperty(config.propertyKey, ss.getId());
+          const file = DriveApp.getFileById(ss.getId());
+          folder.addFile(file);
+          try { DriveApp.getRootFolder().removeFile(file); } catch (e) {}
+        }
+      } catch (err) {
+        ss = SpreadsheetApp.create(config.spreadsheetTitle);
+        props.setProperty(config.propertyKey, ss.getId());
+      }
     }
 
     config.sheets.forEach((sheetCfg) => {

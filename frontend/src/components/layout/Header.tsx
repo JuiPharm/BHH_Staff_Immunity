@@ -1,19 +1,18 @@
 import React from 'react';
 import { AppBar, Toolbar, Typography, Box, Chip, Button, Avatar, Menu, MenuItem, ListItemIcon, ListItemText } from '@mui/material';
-import { ShieldAlert, LogOut, RefreshCw, KeyRound, Building2 } from 'lucide-react';
+import { ShieldAlert, LogOut, KeyRound, Building2 } from 'lucide-react';
 import { UserSession, UserRole } from '../../types';
 import { bdmsColors } from '../../theme/bdmsTheme';
 
 interface HeaderProps {
   session: UserSession | null;
   onLogout: () => void;
-  onRoleSwitch: (role: UserRole) => void;
+  onRoleSwitch?: (role: UserRole) => void;
   onChangePassword: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ session, onLogout, onRoleSwitch, onChangePassword }) => {
+export const Header: React.FC<HeaderProps> = ({ session, onLogout, onChangePassword }) => {
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
-  const [roleAnchorEl, setRoleAnchorEl] = React.useState<null | HTMLElement>(null);
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => setAnchorEl(event.currentTarget);
   const handleMenuClose = () => setAnchorEl(null);
@@ -84,37 +83,15 @@ export const Header: React.FC<HeaderProps> = ({ session, onLogout, onRoleSwitch,
         {/* User Account Controls */}
         {session ? (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            {/* Quick Demo Role Switcher */}
+            {/* Static Role Display Badge */}
             <Chip
-              icon={<RefreshCw size={14} style={{ color: '#FFF' }} />}
               label={`Role: ${getRoleLabel(session.role)}`}
-              onClick={(e) => setRoleAnchorEl(e.currentTarget)}
               sx={{
                 backgroundColor: getRoleColor(session.role),
                 color: '#FFF',
                 fontWeight: 600,
-                cursor: 'pointer',
-                '&:hover': { opacity: 0.9 },
               }}
             />
-
-            <Menu anchorEl={roleAnchorEl} open={Boolean(roleAnchorEl)} onClose={() => setRoleAnchorEl(null)}>
-              <MenuItem disabled sx={{ fontWeight: 700, fontSize: '0.8rem', color: bdmsColors.textSecondary }}>
-                สลับบทบาททดสอบ (Demo Role Switch):
-              </MenuItem>
-              <MenuItem onClick={() => { onRoleSwitch('INFECTION_CONTROL'); setRoleAnchorEl(null); }}>
-                Infection Control (IC)
-              </MenuItem>
-              <MenuItem onClick={() => { onRoleSwitch('HR'); setRoleAnchorEl(null); }}>
-                Human Resources (HR)
-              </MenuItem>
-              <MenuItem onClick={() => { onRoleSwitch('PHYSICIAN'); setRoleAnchorEl(null); }}>
-                Physician (แพทย์)
-              </MenuItem>
-              <MenuItem onClick={() => { onRoleSwitch('DATA_OWNER'); setRoleAnchorEl(null); }}>
-                Data Owner (บุคลากร)
-              </MenuItem>
-            </Menu>
 
             <Button
               onClick={handleMenuOpen}

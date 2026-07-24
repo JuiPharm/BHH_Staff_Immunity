@@ -10,7 +10,12 @@ export class SheetRepository {
 
   private getSpreadsheet(): GoogleAppsScript.Spreadsheet.Spreadsheet {
     if (this.spreadsheetId) {
-      return SpreadsheetApp.openById(this.spreadsheetId);
+      try {
+        return SpreadsheetApp.openById(this.spreadsheetId);
+      } catch (err) {
+        console.error('Failed to open spreadsheet by ID:', this.spreadsheetId, err);
+        return SpreadsheetApp.getActiveSpreadsheet();
+      }
     }
     return SpreadsheetApp.getActiveSpreadsheet();
   }

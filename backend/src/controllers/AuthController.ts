@@ -1,5 +1,6 @@
 import { AccountRepository } from '../repositories/AccountRepository';
 import { SessionRepository } from '../repositories/SessionRepository';
+import { StaffRepository } from '../repositories/StaffRepository';
 import { PasswordService } from '../services/PasswordService';
 import { SessionService } from '../services/SessionService';
 import { RateLimitService } from '../services/RateLimitService';
@@ -9,10 +10,12 @@ import { ResponseHelper } from '../utils/ResponseHelper';
 export class AuthController {
   private accountRepo: AccountRepository;
   private sessionRepo: SessionRepository;
+  private staffRepo: StaffRepository;
 
-  constructor(accountRepo?: AccountRepository, sessionRepo?: SessionRepository) {
+  constructor(accountRepo?: AccountRepository, sessionRepo?: SessionRepository, staffRepo?: StaffRepository) {
     this.accountRepo = accountRepo || new AccountRepository();
     this.sessionRepo = sessionRepo || new SessionRepository();
+    this.staffRepo = staffRepo || new StaffRepository();
   }
 
   /**
@@ -23,9 +26,7 @@ export class AuthController {
   /**
    * Handle User Login
    */
-  public login(payload: any, requestId: string): GoogleAppsScript.Content.TextOutput {
-    const { staffId, password } = payload;
-
+  public login(staffId: string, password: string, requestId: string): GoogleAppsScript.Content.TextOutput {
     if (!staffId || !password) {
       return ResponseHelper.error('INVALID_INPUT', AuthController.GENERIC_AUTH_ERROR, requestId, 400);
     }
@@ -87,10 +88,21 @@ export class AuthController {
     const { token, session } = SessionService.createSession(staffId);
     this.sessionRepo.saveSession(session);
 
+    // Fetch Staff Profile
+    const staff = this.staffRepo.findByStaffId(staffId);
+    const userRole = account.FunctionalRole || 'DATA_OWNER';
+
     return ResponseHelper.success(
       {
         token,
         staffId: account.StaffID,
+        role: userRole,
+        userLevel: account.UserLevel || 'NORMAL_USER',
+        firstName: staff ? staff.FirstName : account.StaffID,
+        lastName: staff ? staff.LastName : '',
+        department: staff ? staff.DepartmentCode : 'General',
+        workGroup: staff ? staff.WorkGroup : 'CLINICAL',
+        email: staff ? staff.Email : '',
         mustChangePassword: account.MustChangePassword
       },
       requestId
@@ -100,8 +112,7 @@ export class AuthController {
   /**
    * Handle Password Change (Revokes ALL active sessions on success)
    */
-  public changePassword(staffId: string, payload: any, requestId: string): GoogleAppsScript.Content.TextOutput {
-    const { oldPassword, newPassword } = payload;
+  public changePassword(staffId: string, oldPassword: string, newPassword: string, requestId: string): GoogleAppsScript.Content.TextOutput {
     if (!oldPassword || !newPassword || newPassword.length < 8) {
       return ResponseHelper.error('INVALID_INPUT', 'รหัสผ่านใหม่ต้องมีความยาวอย่างน้อย 8 ตัวอักษร', requestId, 400);
     }

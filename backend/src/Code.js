@@ -139,7 +139,12 @@ var GASApp = (() => {
     }
     getSpreadsheet() {
       if (this.spreadsheetId) {
-        return SpreadsheetApp.openById(this.spreadsheetId);
+        try {
+          return SpreadsheetApp.openById(this.spreadsheetId);
+        } catch (err) {
+          console.error("Failed to open spreadsheet by ID:", this.spreadsheetId, err);
+          return SpreadsheetApp.getActiveSpreadsheet();
+        }
       }
       return SpreadsheetApp.getActiveSpreadsheet();
     }
@@ -559,223 +564,6 @@ var GASApp = (() => {
     }
   };
 
-  // src/services/SessionService.ts
-  var SessionService = class {
-    /**
-     * Hashes session token using SHA-256.
-     */
-    static hashToken(token) {
-      return CryptoService.hashSha256(token);
-    }
-    /**
-     * Generates a new random cryptographic session token and session data object.
-     * Stores ONLY the token hash in database.
-     */
-    static createSession(staffId) {
-      const rawToken = `sess-${CryptoService.generateUuid()}`;
-      const tokenHash = this.hashToken(rawToken);
-      const now = /* @__PURE__ */ new Date();
-      const idleExpires = new Date(now.getTime() + this.IDLE_TIMEOUT_MINS * 60 * 1e3);
-      const absoluteExpires = new Date(now.getTime() + this.ABSOLUTE_TIMEOUT_HOURS * 60 * 60 * 1e3);
-      const session = {
-        sessionUuid: `sess-uuid-${CryptoService.generateUuid()}`,
-        staffId,
-        tokenHash,
-        idleExpiresAt: idleExpires.toISOString(),
-        absoluteExpiresAt: absoluteExpires.toISOString(),
-        sessionVersion: 1,
-        isRevoked: false,
-        lastSeenAt: now.toISOString(),
-        createdAt: now.toISOString()
-      };
-      return { token: rawToken, session };
-    }
-    /**
-     * Checks if session is valid (Not expired, not revoked).
-     */
-    static isValidSession(session) {
-      if (session.isRevoked) return false;
-      const now = (/* @__PURE__ */ new Date()).getTime();
-      const idleTime = new Date(session.idleExpiresAt).getTime();
-      const absoluteTime = new Date(session.absoluteExpiresAt).getTime();
-      if (now > idleTime || now > absoluteTime) return false;
-      return true;
-    }
-  };
-  SessionService.IDLE_TIMEOUT_MINS = 30;
-  SessionService.ABSOLUTE_TIMEOUT_HOURS = 12;
-
-  // src/services/RateLimitService.ts
-  var RateLimitService = class {
-    // 15 minutes
-    /**
-     * Checks if an identifier (StaffID or IP) is rate-limited.
-     */
-    static isRateLimited(identifier) {
-      const cache = CacheService.getScriptCache();
-      if (!cache) return false;
-      const attempts = Number(cache.get(`rate_${identifier}`) || "0");
-      return attempts >= this.MAX_ATTEMPTS;
-    }
-    /**
-     * Increments failed attempt counter in CacheService.
-     */
-    static incrementAttempts(identifier) {
-      const cache = CacheService.getScriptCache();
-      if (!cache) return 1;
-      const key = `rate_${identifier}`;
-      const attempts = Number(cache.get(key) || "0") + 1;
-      cache.put(key, String(attempts), this.LOCKOUT_SECONDS);
-      return attempts;
-    }
-    /**
-     * Resets rate limit attempt counter upon successful authentication.
-     */
-    static resetAttempts(identifier) {
-      const cache = CacheService.getScriptCache();
-      if (cache) {
-        cache.remove(`rate_${identifier}`);
-      }
-    }
-  };
-  RateLimitService.MAX_ATTEMPTS = 5;
-  RateLimitService.LOCKOUT_SECONDS = 900;
-
-  // src/controllers/AuthController.ts
-  var _AuthController = class _AuthController {
-    constructor(accountRepo, sessionRepo) {
-      this.accountRepo = accountRepo || new AccountRepository();
-      this.sessionRepo = sessionRepo || new SessionRepository();
-    }
-    /**
-     * Handle User Login
-     */
-    login(payload, requestId) {
-      const { staffId, password } = payload;
-      if (!staffId || !password) {
-        return ResponseHelper.error("INVALID_INPUT", _AuthController.GENERIC_AUTH_ERROR, requestId, 400);
-      }
-      if (RateLimitService.isRateLimited(staffId)) {
-        return ResponseHelper.error(
-          "TOO_MANY_REQUESTS",
-          "\u0E1E\u0E22\u0E32\u0E22\u0E32\u0E21\u0E40\u0E02\u0E49\u0E32\u0E2A\u0E39\u0E48\u0E23\u0E30\u0E1A\u0E1A\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14\u0E40\u0E01\u0E34\u0E19\u0E01\u0E33\u0E2B\u0E19\u0E14 \u0E01\u0E23\u0E38\u0E13\u0E32\u0E25\u0E2D\u0E07\u0E43\u0E2B\u0E21\u0E48\u0E43\u0E19\u0E2D\u0E35\u0E01 15 \u0E19\u0E32\u0E17\u0E35",
-          requestId,
-          429
-        );
-      }
-      const account = this.accountRepo.findByStaffId(staffId);
-      if (!account) {
-        RateLimitService.incrementAttempts(staffId);
-        return ResponseHelper.error("INVALID_CREDENTIALS", _AuthController.GENERIC_AUTH_ERROR, requestId, 401);
-      }
-      if (account.AccountStatus === "DISABLED") {
-        return ResponseHelper.error("ACCOUNT_DISABLED", "\u0E1A\u0E31\u0E0D\u0E0A\u0E35\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E19\u0E35\u0E49\u0E16\u0E39\u0E01\u0E23\u0E30\u0E07\u0E31\u0E1A\u0E01\u0E32\u0E23\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19", requestId, 403);
-      }
-      if (account.AccountStatus === "LOCKED" && account.LockoutUntil) {
-        const lockoutExpiry = new Date(account.LockoutUntil).getTime();
-        if (Date.now() < lockoutExpiry) {
-          return ResponseHelper.error(
-            "ACCOUNT_LOCKED",
-            "\u0E1A\u0E31\u0E0D\u0E0A\u0E35\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49\u0E16\u0E39\u0E01\u0E25\u0E47\u0E2D\u0E01\u0E0A\u0E31\u0E48\u0E27\u0E04\u0E23\u0E32\u0E27\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E32\u0E01\u0E43\u0E2A\u0E48\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E1C\u0E34\u0E14\u0E40\u0E01\u0E34\u0E19 5 \u0E04\u0E23\u0E31\u0E49\u0E07 \u0E01\u0E23\u0E38\u0E13\u0E32\u0E25\u0E2D\u0E07\u0E43\u0E2B\u0E21\u0E48\u0E20\u0E32\u0E22\u0E2B\u0E25\u0E31\u0E07",
-            requestId,
-            423
-          );
-        }
-      }
-      const isValid = PasswordService.verifyPassword(password, account.PasswordHash, account.Salt, account.Iterations);
-      if (!isValid) {
-        RateLimitService.incrementAttempts(staffId);
-        const { failedCount, isLocked } = this.accountRepo.handleFailedLogin(staffId);
-        const msg = isLocked ? "\u0E1A\u0E31\u0E0D\u0E0A\u0E35\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49\u0E16\u0E39\u0E01\u0E25\u0E47\u0E2D\u0E01\u0E0A\u0E31\u0E48\u0E27\u0E04\u0E23\u0E32\u0E27\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E32\u0E01\u0E43\u0E2A\u0E48\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E1C\u0E34\u0E14\u0E04\u0E23\u0E1A 5 \u0E04\u0E23\u0E31\u0E49\u0E07" : _AuthController.GENERIC_AUTH_ERROR;
-        return ResponseHelper.error("INVALID_CREDENTIALS", msg, requestId, 401);
-      }
-      RateLimitService.resetAttempts(staffId);
-      this.accountRepo.resetFailedLogin(staffId);
-      const { token, session } = SessionService.createSession(staffId);
-      this.sessionRepo.saveSession(session);
-      return ResponseHelper.success(
-        {
-          token,
-          staffId: account.StaffID,
-          mustChangePassword: account.MustChangePassword
-        },
-        requestId
-      );
-    }
-    /**
-     * Handle Password Change (Revokes ALL active sessions on success)
-     */
-    changePassword(staffId, payload, requestId) {
-      const { oldPassword, newPassword } = payload;
-      if (!oldPassword || !newPassword || newPassword.length < 8) {
-        return ResponseHelper.error("INVALID_INPUT", "\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E43\u0E2B\u0E21\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E21\u0E35\u0E04\u0E27\u0E32\u0E21\u0E22\u0E32\u0E27\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E19\u0E49\u0E2D\u0E22 8 \u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23", requestId, 400);
-      }
-      const account = this.accountRepo.findByStaffId(staffId);
-      if (!account) {
-        return ResponseHelper.error("NOT_FOUND", "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19", requestId, 404);
-      }
-      const isValid = PasswordService.verifyPassword(oldPassword, account.PasswordHash, account.Salt, account.Iterations);
-      if (!isValid) {
-        return ResponseHelper.error("INVALID_PASSWORD", "\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E40\u0E14\u0E34\u0E21\u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07", requestId, 400);
-      }
-      const { hash, salt } = PasswordService.hashPassword(newPassword);
-      this.accountRepo.updatePassword(staffId, hash, salt);
-      this.sessionRepo.revokeAllSessionsForStaff(staffId);
-      return ResponseHelper.success({ message: "\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 \u0E41\u0E25\u0E30\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E40\u0E0B\u0E2A\u0E0A\u0E31\u0E19\u0E40\u0E14\u0E34\u0E21\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14\u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22" }, requestId);
-    }
-    /**
-     * Request Password Reset (Generates one-time token hash; NO plain-text password sent in email)
-     */
-    requestResetToken(staffId, requestId) {
-      const account = this.accountRepo.findByStaffId(staffId);
-      if (account) {
-        const { tokenHash } = PasswordService.generateResetToken();
-        const expiresAt = new Date(Date.now() + 60 * 60 * 1e3).toISOString();
-        this.accountRepo.setResetToken(staffId, tokenHash, expiresAt);
-      }
-      return ResponseHelper.success({ message: "\u0E2B\u0E32\u0E01\u0E23\u0E2B\u0E31\u0E2A\u0E1E\u0E19\u0E31\u0E01\u0E07\u0E32\u0E19\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07 \u0E23\u0E30\u0E1A\u0E1A\u0E44\u0E14\u0E49\u0E2A\u0E48\u0E07\u0E04\u0E33\u0E02\u0E2D\u0E23\u0E35\u0E40\u0E0B\u0E47\u0E15\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E41\u0E25\u0E49\u0E27" }, requestId);
-    }
-    /**
-     * Perform One-Time Token Reset Password (Revokes ALL active sessions on success)
-     */
-    resetPassword(payload, requestId) {
-      const { staffId, resetToken, newPassword } = payload;
-      if (!staffId || !resetToken || !newPassword || newPassword.length < 8) {
-        return ResponseHelper.error("INVALID_INPUT", "\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E01\u0E32\u0E23\u0E23\u0E35\u0E40\u0E0B\u0E47\u0E15\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E44\u0E21\u0E48\u0E04\u0E23\u0E1A\u0E16\u0E49\u0E27\u0E19", requestId, 400);
-      }
-      const account = this.accountRepo.findByStaffId(staffId);
-      if (!account || !account.ResetTokenHash || !account.ResetTokenExpiresAt) {
-        return ResponseHelper.error("INVALID_TOKEN", "Reset Token \u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07\u0E2B\u0E23\u0E37\u0E2D\u0E2B\u0E21\u0E14\u0E2D\u0E32\u0E22\u0E38", requestId, 400);
-      }
-      if (Date.now() > new Date(account.ResetTokenExpiresAt).getTime()) {
-        return ResponseHelper.error("TOKEN_EXPIRED", "Reset Token \u0E2B\u0E21\u0E14\u0E2D\u0E32\u0E22\u0E38\u0E41\u0E25\u0E49\u0E27 \u0E01\u0E23\u0E38\u0E13\u0E32\u0E2A\u0E48\u0E07\u0E04\u0E33\u0E02\u0E2D\u0E43\u0E2B\u0E21\u0E48", requestId, 400);
-      }
-      const inputTokenHash = PasswordService.hashResetToken(resetToken);
-      if (!CryptoService.constantTimeCompare(inputTokenHash, account.ResetTokenHash)) {
-        return ResponseHelper.error("INVALID_TOKEN", "Reset Token \u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07", requestId, 400);
-      }
-      const { hash, salt } = PasswordService.hashPassword(newPassword);
-      this.accountRepo.updatePassword(staffId, hash, salt);
-      this.sessionRepo.revokeAllSessionsForStaff(staffId);
-      return ResponseHelper.success({ message: "\u0E23\u0E35\u0E40\u0E0B\u0E47\u0E15\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E43\u0E2B\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 \u0E41\u0E25\u0E30\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E40\u0E0B\u0E2A\u0E0A\u0E31\u0E19\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14\u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22" }, requestId);
-    }
-    /**
-     * Handle Logout
-     */
-    logout(rawToken, requestId) {
-      if (rawToken) {
-        const tokenHash = SessionService.hashToken(rawToken);
-        this.sessionRepo.revokeSession(tokenHash);
-      }
-      return ResponseHelper.success({ message: "\u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E23\u0E30\u0E1A\u0E1A\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08" }, requestId);
-    }
-  };
-  /**
-   * Generic Error Message to prevent Account Enumeration.
-   */
-  _AuthController.GENERIC_AUTH_ERROR = "\u0E23\u0E2B\u0E31\u0E2A\u0E1E\u0E19\u0E31\u0E01\u0E07\u0E32\u0E19\u0E2B\u0E23\u0E37\u0E2D\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07";
-  var AuthController = _AuthController;
-
   // src/repositories/StaffRepository.ts
   var StaffRepository = class {
     constructor(sheetRepo) {
@@ -951,6 +739,231 @@ var GASApp = (() => {
       });
     }
   };
+
+  // src/services/SessionService.ts
+  var SessionService = class {
+    /**
+     * Hashes session token using SHA-256.
+     */
+    static hashToken(token) {
+      return CryptoService.hashSha256(token);
+    }
+    /**
+     * Generates a new random cryptographic session token and session data object.
+     * Stores ONLY the token hash in database.
+     */
+    static createSession(staffId) {
+      const rawToken = `sess-${CryptoService.generateUuid()}`;
+      const tokenHash = this.hashToken(rawToken);
+      const now = /* @__PURE__ */ new Date();
+      const idleExpires = new Date(now.getTime() + this.IDLE_TIMEOUT_MINS * 60 * 1e3);
+      const absoluteExpires = new Date(now.getTime() + this.ABSOLUTE_TIMEOUT_HOURS * 60 * 60 * 1e3);
+      const session = {
+        sessionUuid: `sess-uuid-${CryptoService.generateUuid()}`,
+        staffId,
+        tokenHash,
+        idleExpiresAt: idleExpires.toISOString(),
+        absoluteExpiresAt: absoluteExpires.toISOString(),
+        sessionVersion: 1,
+        isRevoked: false,
+        lastSeenAt: now.toISOString(),
+        createdAt: now.toISOString()
+      };
+      return { token: rawToken, session };
+    }
+    /**
+     * Checks if session is valid (Not expired, not revoked).
+     */
+    static isValidSession(session) {
+      if (session.isRevoked) return false;
+      const now = (/* @__PURE__ */ new Date()).getTime();
+      const idleTime = new Date(session.idleExpiresAt).getTime();
+      const absoluteTime = new Date(session.absoluteExpiresAt).getTime();
+      if (now > idleTime || now > absoluteTime) return false;
+      return true;
+    }
+  };
+  SessionService.IDLE_TIMEOUT_MINS = 30;
+  SessionService.ABSOLUTE_TIMEOUT_HOURS = 12;
+
+  // src/services/RateLimitService.ts
+  var RateLimitService = class {
+    // 15 minutes
+    /**
+     * Checks if an identifier (StaffID or IP) is rate-limited.
+     */
+    static isRateLimited(identifier) {
+      const cache = CacheService.getScriptCache();
+      if (!cache) return false;
+      const attempts = Number(cache.get(`rate_${identifier}`) || "0");
+      return attempts >= this.MAX_ATTEMPTS;
+    }
+    /**
+     * Increments failed attempt counter in CacheService.
+     */
+    static incrementAttempts(identifier) {
+      const cache = CacheService.getScriptCache();
+      if (!cache) return 1;
+      const key = `rate_${identifier}`;
+      const attempts = Number(cache.get(key) || "0") + 1;
+      cache.put(key, String(attempts), this.LOCKOUT_SECONDS);
+      return attempts;
+    }
+    /**
+     * Resets rate limit attempt counter upon successful authentication.
+     */
+    static resetAttempts(identifier) {
+      const cache = CacheService.getScriptCache();
+      if (cache) {
+        cache.remove(`rate_${identifier}`);
+      }
+    }
+  };
+  RateLimitService.MAX_ATTEMPTS = 5;
+  RateLimitService.LOCKOUT_SECONDS = 900;
+
+  // src/controllers/AuthController.ts
+  var _AuthController = class _AuthController {
+    constructor(accountRepo, sessionRepo, staffRepo) {
+      this.accountRepo = accountRepo || new AccountRepository();
+      this.sessionRepo = sessionRepo || new SessionRepository();
+      this.staffRepo = staffRepo || new StaffRepository();
+    }
+    /**
+     * Handle User Login
+     */
+    login(staffId, password, requestId) {
+      if (!staffId || !password) {
+        return ResponseHelper.error("INVALID_INPUT", _AuthController.GENERIC_AUTH_ERROR, requestId, 400);
+      }
+      if (RateLimitService.isRateLimited(staffId)) {
+        return ResponseHelper.error(
+          "TOO_MANY_REQUESTS",
+          "\u0E1E\u0E22\u0E32\u0E22\u0E32\u0E21\u0E40\u0E02\u0E49\u0E32\u0E2A\u0E39\u0E48\u0E23\u0E30\u0E1A\u0E1A\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14\u0E40\u0E01\u0E34\u0E19\u0E01\u0E33\u0E2B\u0E19\u0E14 \u0E01\u0E23\u0E38\u0E13\u0E32\u0E25\u0E2D\u0E07\u0E43\u0E2B\u0E21\u0E48\u0E43\u0E19\u0E2D\u0E35\u0E01 15 \u0E19\u0E32\u0E17\u0E35",
+          requestId,
+          429
+        );
+      }
+      const account = this.accountRepo.findByStaffId(staffId);
+      if (!account) {
+        RateLimitService.incrementAttempts(staffId);
+        return ResponseHelper.error("INVALID_CREDENTIALS", _AuthController.GENERIC_AUTH_ERROR, requestId, 401);
+      }
+      if (account.AccountStatus === "DISABLED") {
+        return ResponseHelper.error("ACCOUNT_DISABLED", "\u0E1A\u0E31\u0E0D\u0E0A\u0E35\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E19\u0E35\u0E49\u0E16\u0E39\u0E01\u0E23\u0E30\u0E07\u0E31\u0E1A\u0E01\u0E32\u0E23\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19", requestId, 403);
+      }
+      if (account.AccountStatus === "LOCKED" && account.LockoutUntil) {
+        const lockoutExpiry = new Date(account.LockoutUntil).getTime();
+        if (Date.now() < lockoutExpiry) {
+          return ResponseHelper.error(
+            "ACCOUNT_LOCKED",
+            "\u0E1A\u0E31\u0E0D\u0E0A\u0E35\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49\u0E16\u0E39\u0E01\u0E25\u0E47\u0E2D\u0E01\u0E0A\u0E31\u0E48\u0E27\u0E04\u0E23\u0E32\u0E27\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E32\u0E01\u0E43\u0E2A\u0E48\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E1C\u0E34\u0E14\u0E40\u0E01\u0E34\u0E19 5 \u0E04\u0E23\u0E31\u0E49\u0E07 \u0E01\u0E23\u0E38\u0E13\u0E32\u0E25\u0E2D\u0E07\u0E43\u0E2B\u0E21\u0E48\u0E20\u0E32\u0E22\u0E2B\u0E25\u0E31\u0E07",
+            requestId,
+            423
+          );
+        }
+      }
+      const isValid = PasswordService.verifyPassword(password, account.PasswordHash, account.Salt, account.Iterations);
+      if (!isValid) {
+        RateLimitService.incrementAttempts(staffId);
+        const { failedCount, isLocked } = this.accountRepo.handleFailedLogin(staffId);
+        const msg = isLocked ? "\u0E1A\u0E31\u0E0D\u0E0A\u0E35\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49\u0E16\u0E39\u0E01\u0E25\u0E47\u0E2D\u0E01\u0E0A\u0E31\u0E48\u0E27\u0E04\u0E23\u0E32\u0E27\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E32\u0E01\u0E43\u0E2A\u0E48\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E1C\u0E34\u0E14\u0E04\u0E23\u0E1A 5 \u0E04\u0E23\u0E31\u0E49\u0E07" : _AuthController.GENERIC_AUTH_ERROR;
+        return ResponseHelper.error("INVALID_CREDENTIALS", msg, requestId, 401);
+      }
+      RateLimitService.resetAttempts(staffId);
+      this.accountRepo.resetFailedLogin(staffId);
+      const { token, session } = SessionService.createSession(staffId);
+      this.sessionRepo.saveSession(session);
+      const staff = this.staffRepo.findByStaffId(staffId);
+      const userRole = account.FunctionalRole || "DATA_OWNER";
+      return ResponseHelper.success(
+        {
+          token,
+          staffId: account.StaffID,
+          role: userRole,
+          userLevel: account.UserLevel || "NORMAL_USER",
+          firstName: staff ? staff.FirstName : account.StaffID,
+          lastName: staff ? staff.LastName : "",
+          department: staff ? staff.DepartmentCode : "General",
+          workGroup: staff ? staff.WorkGroup : "CLINICAL",
+          email: staff ? staff.Email : "",
+          mustChangePassword: account.MustChangePassword
+        },
+        requestId
+      );
+    }
+    /**
+     * Handle Password Change (Revokes ALL active sessions on success)
+     */
+    changePassword(staffId, oldPassword, newPassword, requestId) {
+      if (!oldPassword || !newPassword || newPassword.length < 8) {
+        return ResponseHelper.error("INVALID_INPUT", "\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E43\u0E2B\u0E21\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E21\u0E35\u0E04\u0E27\u0E32\u0E21\u0E22\u0E32\u0E27\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E19\u0E49\u0E2D\u0E22 8 \u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23", requestId, 400);
+      }
+      const account = this.accountRepo.findByStaffId(staffId);
+      if (!account) {
+        return ResponseHelper.error("NOT_FOUND", "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19", requestId, 404);
+      }
+      const isValid = PasswordService.verifyPassword(oldPassword, account.PasswordHash, account.Salt, account.Iterations);
+      if (!isValid) {
+        return ResponseHelper.error("INVALID_PASSWORD", "\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E40\u0E14\u0E34\u0E21\u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07", requestId, 400);
+      }
+      const { hash, salt } = PasswordService.hashPassword(newPassword);
+      this.accountRepo.updatePassword(staffId, hash, salt);
+      this.sessionRepo.revokeAllSessionsForStaff(staffId);
+      return ResponseHelper.success({ message: "\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 \u0E41\u0E25\u0E30\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E40\u0E0B\u0E2A\u0E0A\u0E31\u0E19\u0E40\u0E14\u0E34\u0E21\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14\u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22" }, requestId);
+    }
+    /**
+     * Request Password Reset (Generates one-time token hash; NO plain-text password sent in email)
+     */
+    requestResetToken(staffId, requestId) {
+      const account = this.accountRepo.findByStaffId(staffId);
+      if (account) {
+        const { tokenHash } = PasswordService.generateResetToken();
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1e3).toISOString();
+        this.accountRepo.setResetToken(staffId, tokenHash, expiresAt);
+      }
+      return ResponseHelper.success({ message: "\u0E2B\u0E32\u0E01\u0E23\u0E2B\u0E31\u0E2A\u0E1E\u0E19\u0E31\u0E01\u0E07\u0E32\u0E19\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07 \u0E23\u0E30\u0E1A\u0E1A\u0E44\u0E14\u0E49\u0E2A\u0E48\u0E07\u0E04\u0E33\u0E02\u0E2D\u0E23\u0E35\u0E40\u0E0B\u0E47\u0E15\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E41\u0E25\u0E49\u0E27" }, requestId);
+    }
+    /**
+     * Perform One-Time Token Reset Password (Revokes ALL active sessions on success)
+     */
+    resetPassword(payload, requestId) {
+      const { staffId, resetToken, newPassword } = payload;
+      if (!staffId || !resetToken || !newPassword || newPassword.length < 8) {
+        return ResponseHelper.error("INVALID_INPUT", "\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E01\u0E32\u0E23\u0E23\u0E35\u0E40\u0E0B\u0E47\u0E15\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E44\u0E21\u0E48\u0E04\u0E23\u0E1A\u0E16\u0E49\u0E27\u0E19", requestId, 400);
+      }
+      const account = this.accountRepo.findByStaffId(staffId);
+      if (!account || !account.ResetTokenHash || !account.ResetTokenExpiresAt) {
+        return ResponseHelper.error("INVALID_TOKEN", "Reset Token \u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07\u0E2B\u0E23\u0E37\u0E2D\u0E2B\u0E21\u0E14\u0E2D\u0E32\u0E22\u0E38", requestId, 400);
+      }
+      if (Date.now() > new Date(account.ResetTokenExpiresAt).getTime()) {
+        return ResponseHelper.error("TOKEN_EXPIRED", "Reset Token \u0E2B\u0E21\u0E14\u0E2D\u0E32\u0E22\u0E38\u0E41\u0E25\u0E49\u0E27 \u0E01\u0E23\u0E38\u0E13\u0E32\u0E2A\u0E48\u0E07\u0E04\u0E33\u0E02\u0E2D\u0E43\u0E2B\u0E21\u0E48", requestId, 400);
+      }
+      const inputTokenHash = PasswordService.hashResetToken(resetToken);
+      if (!CryptoService.constantTimeCompare(inputTokenHash, account.ResetTokenHash)) {
+        return ResponseHelper.error("INVALID_TOKEN", "Reset Token \u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07", requestId, 400);
+      }
+      const { hash, salt } = PasswordService.hashPassword(newPassword);
+      this.accountRepo.updatePassword(staffId, hash, salt);
+      this.sessionRepo.revokeAllSessionsForStaff(staffId);
+      return ResponseHelper.success({ message: "\u0E23\u0E35\u0E40\u0E0B\u0E47\u0E15\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E43\u0E2B\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 \u0E41\u0E25\u0E30\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E40\u0E0B\u0E2A\u0E0A\u0E31\u0E19\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14\u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22" }, requestId);
+    }
+    /**
+     * Handle Logout
+     */
+    logout(rawToken, requestId) {
+      if (rawToken) {
+        const tokenHash = SessionService.hashToken(rawToken);
+        this.sessionRepo.revokeSession(tokenHash);
+      }
+      return ResponseHelper.success({ message: "\u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E23\u0E30\u0E1A\u0E1A\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08" }, requestId);
+    }
+  };
+  /**
+   * Generic Error Message to prevent Account Enumeration.
+   */
+  _AuthController.GENERIC_AUTH_ERROR = "\u0E23\u0E2B\u0E31\u0E2A\u0E1E\u0E19\u0E31\u0E01\u0E07\u0E32\u0E19\u0E2B\u0E23\u0E37\u0E2D\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07";
+  var AuthController = _AuthController;
 
   // src/dto/StaffDTO.ts
   var StaffValidationSchema = class {

@@ -1,7 +1,7 @@
 const url = 'https://script.google.com/macros/s/AKfycbwZhiYOz_EyRdbIRwsRurrboTkF_Sg6GXMLY8LAh68hwNpO4FmoN_Wbx6luDB12Ar0Q/exec';
 const payload = {
     action: "login",
-    staffId: "IC8001",
+    staffId: "HR8002",
     password: "password123"
 };
 
@@ -10,10 +10,9 @@ fetch(url, {
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(payload)
 })
-.then(res => res.json())
+.then(res => res.text())
 .then(data => {
-    console.log("Connection successful!");
-    console.log("Response:", JSON.stringify(data, null, 2));
+    console.log("Raw Response:\n", data);
 })
 .catch(err => {
     console.error("Connection failed:", err);

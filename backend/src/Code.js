@@ -57,7 +57,7 @@ var GASApp = (() => {
   };
 
   // src/services/CryptoService.ts
-  var CryptoService = class _CryptoService {
+  var CryptoService2 = class _CryptoService {
     /**
      * Generates a random cryptographic salt (hex string).
      */
@@ -245,8 +245,8 @@ var GASApp = (() => {
      * NEVER logs or stores plain-text password.
      */
     static hashPassword(password, customSalt, iterations = _PasswordService.DEFAULT_ITERATIONS) {
-      const salt = customSalt || CryptoService.generateSalt(16);
-      const hash = CryptoService.pbkdf2(password, salt, iterations);
+      const salt = customSalt || CryptoService2.generateSalt(16);
+      const hash = CryptoService2.pbkdf2(password, salt, iterations);
       return { hash, salt, iterations };
     }
     /**
@@ -254,19 +254,19 @@ var GASApp = (() => {
      */
     static verifyPassword(password, expectedHash, salt, iterations = _PasswordService.DEFAULT_ITERATIONS) {
       const { hash } = this.hashPassword(password, salt, iterations);
-      return CryptoService.constantTimeCompare(hash, expectedHash);
+      return CryptoService2.constantTimeCompare(hash, expectedHash);
     }
     /**
      * Hashes a one-time password reset token (SHA-256).
      */
     static hashResetToken(token) {
-      return CryptoService.hashSha256(token);
+      return CryptoService2.hashSha256(token);
     }
     /**
      * Generates a new random one-time reset token and its SHA-256 hash.
      */
     static generateResetToken() {
-      const token = `reset-${CryptoService.generateUuid()}`;
+      const token = `reset-${CryptoService2.generateUuid()}`;
       const tokenHash = this.hashResetToken(token);
       return { token, tokenHash };
     }
@@ -297,6 +297,8 @@ var GASApp = (() => {
         LockoutUntil: user.LockoutUntil ? String(user.LockoutUntil) : void 0,
         MustChangePassword: user.MustChangePassword === true || String(user.MustChangePassword) === "TRUE",
         AccountStatus: user.AccountStatus || "ACTIVE",
+        FunctionalRole: user.FunctionalRole ? String(user.FunctionalRole) : "DATA_OWNER",
+        UserLevel: user.UserLevel ? String(user.UserLevel) : "NORMAL_USER",
         ResetTokenHash: user.ResetTokenHash ? String(user.ResetTokenHash) : void 0,
         ResetTokenExpiresAt: user.ResetTokenExpiresAt ? String(user.ResetTokenExpiresAt) : void 0,
         CreatedAt: String(user.CreatedAt),
@@ -397,54 +399,56 @@ var GASApp = (() => {
     /**
      * Creates a new user account with a hashed password.
      */
-    createAccount(staffId, plainPassword, createdBy) {
+    createAccount(staffId, plainPassword = "password123", createdBy = "SYSTEM", functionalRole = "DATA_OWNER", userLevel = "NORMAL_USER") {
       const existing = this.findByStaffId(staffId);
       if (existing) return;
       const { hash, salt, iterations } = PasswordService.hashPassword(plainPassword);
       const now = (/* @__PURE__ */ new Date()).toISOString();
-      const userUuid = `usr-${Utilities.getUuid()}`;
-      this.sheetRepo.appendRow(
-        "USER_ACCOUNT",
-        [
-          "UserUUID",
-          "StaffID",
-          "PasswordHash",
-          "Salt",
-          "Iterations",
-          "FailedLoginCount",
-          "LockoutUntil",
-          "MustChangePassword",
-          "AccountStatus",
-          "ResetTokenHash",
-          "ResetTokenExpiresAt",
-          "CreatedAt",
-          "CreatedBy",
-          "UpdatedAt",
-          "UpdatedBy",
-          "RecordVersion",
-          "IsDeleted"
-        ],
-        {
-          UserUUID: userUuid,
-          StaffID: staffId,
-          PasswordHash: hash,
-          Salt: salt,
-          Iterations: iterations,
-          FailedLoginCount: 0,
-          LockoutUntil: "",
-          MustChangePassword: true,
-          // Force password change on first login
-          AccountStatus: "ACTIVE",
-          ResetTokenHash: "",
-          ResetTokenExpiresAt: "",
-          CreatedAt: now,
-          CreatedBy: createdBy,
-          UpdatedAt: now,
-          UpdatedBy: createdBy,
-          RecordVersion: 1,
-          IsDeleted: false
-        }
-      );
+      const userUuid = `usr-${typeof CryptoService !== "undefined" && CryptoService.generateUuid ? CryptoService.generateUuid() : Utilities.getUuid()}`;
+      const headers = [
+        "UserUUID",
+        "StaffID",
+        "PasswordHash",
+        "Salt",
+        "Iterations",
+        "FailedLoginCount",
+        "LockoutUntil",
+        "MustChangePassword",
+        "AccountStatus",
+        "FunctionalRole",
+        "UserLevel",
+        "ResetTokenHash",
+        "ResetTokenExpiresAt",
+        "CreatedAt",
+        "CreatedBy",
+        "UpdatedAt",
+        "UpdatedBy",
+        "RecordVersion",
+        "IsDeleted"
+      ];
+      const rowObject = {
+        UserUUID: userUuid,
+        StaffID: staffId,
+        PasswordHash: hash,
+        Salt: salt,
+        Iterations: iterations,
+        FailedLoginCount: 0,
+        LockoutUntil: "",
+        MustChangePassword: true,
+        // Force password change on first login
+        AccountStatus: "ACTIVE",
+        FunctionalRole: functionalRole,
+        UserLevel: userLevel,
+        ResetTokenHash: "",
+        ResetTokenExpiresAt: "",
+        CreatedAt: now,
+        CreatedBy: createdBy,
+        UpdatedAt: now,
+        UpdatedBy: createdBy,
+        RecordVersion: 1,
+        IsDeleted: false
+      };
+      this.sheetRepo.appendRow("USER_ACCOUNT", headers, rowObject);
     }
   };
 
@@ -628,7 +632,7 @@ var GASApp = (() => {
           throw new Error(`Duplicate StaffID: \u0E23\u0E2B\u0E31\u0E2A\u0E1E\u0E19\u0E31\u0E01\u0E07\u0E32\u0E19 '${dto.StaffID}' \u0E21\u0E35\u0E2D\u0E22\u0E39\u0E48\u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A\u0E41\u0E25\u0E49\u0E27`);
         }
         const now = (/* @__PURE__ */ new Date()).toISOString();
-        const recordUuid = `staff-${CryptoService.generateUuid()}`;
+        const recordUuid = `staff-${CryptoService2.generateUuid()}`;
         const headers = [
           "StaffID",
           "HN",
@@ -746,20 +750,20 @@ var GASApp = (() => {
      * Hashes session token using SHA-256.
      */
     static hashToken(token) {
-      return CryptoService.hashSha256(token);
+      return CryptoService2.hashSha256(token);
     }
     /**
      * Generates a new random cryptographic session token and session data object.
      * Stores ONLY the token hash in database.
      */
     static createSession(staffId) {
-      const rawToken = `sess-${CryptoService.generateUuid()}`;
+      const rawToken = `sess-${CryptoService2.generateUuid()}`;
       const tokenHash = this.hashToken(rawToken);
       const now = /* @__PURE__ */ new Date();
       const idleExpires = new Date(now.getTime() + this.IDLE_TIMEOUT_MINS * 60 * 1e3);
       const absoluteExpires = new Date(now.getTime() + this.ABSOLUTE_TIMEOUT_HOURS * 60 * 60 * 1e3);
       const session = {
-        sessionUuid: `sess-uuid-${CryptoService.generateUuid()}`,
+        sessionUuid: `sess-uuid-${CryptoService2.generateUuid()}`,
         staffId,
         tokenHash,
         idleExpiresAt: idleExpires.toISOString(),
@@ -940,7 +944,7 @@ var GASApp = (() => {
         return ResponseHelper.error("TOKEN_EXPIRED", "Reset Token \u0E2B\u0E21\u0E14\u0E2D\u0E32\u0E22\u0E38\u0E41\u0E25\u0E49\u0E27 \u0E01\u0E23\u0E38\u0E13\u0E32\u0E2A\u0E48\u0E07\u0E04\u0E33\u0E02\u0E2D\u0E43\u0E2B\u0E21\u0E48", requestId, 400);
       }
       const inputTokenHash = PasswordService.hashResetToken(resetToken);
-      if (!CryptoService.constantTimeCompare(inputTokenHash, account.ResetTokenHash)) {
+      if (!CryptoService2.constantTimeCompare(inputTokenHash, account.ResetTokenHash)) {
         return ResponseHelper.error("INVALID_TOKEN", "Reset Token \u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07", requestId, 400);
       }
       const { hash, salt } = PasswordService.hashPassword(newPassword);
@@ -1103,7 +1107,7 @@ var GASApp = (() => {
      * Enforces Action-Level, Record-Level (IDOR Protection), and logs Audit Action on sensitive view.
      */
     static authorize(userRole, userStaffId, action, targetStaffId, requestId) {
-      const reqId = requestId || CryptoService.generateUuid();
+      const reqId = requestId || CryptoService2.generateUuid();
       const allowedActions = this.ROLE_PERMISSIONS[userRole] || [];
       if (!allowedActions.includes(action)) {
         return {
@@ -1146,7 +1150,7 @@ var GASApp = (() => {
         const sheet = ss.getSheetByName("AUDIT_LOG");
         if (!sheet) return;
         const now = (/* @__PURE__ */ new Date()).toISOString();
-        const logUuid = `log-${CryptoService.generateUuid()}`;
+        const logUuid = `log-${CryptoService2.generateUuid()}`;
         const action = "SENSITIVE_RECORD_VIEW";
         const target = `Staff:${targetStaffId}/HealthRecord`;
         const details = JSON.stringify({ viewedBy: userStaffId, role: userRole });
@@ -1155,7 +1159,7 @@ var GASApp = (() => {
         if (lastRow > 1) {
           prevHash = String(sheet.getRange(lastRow, 9).getValue());
         }
-        const currentHash = CryptoService.computeAuditEntryHash(logUuid, now, userStaffId, action, target, details, prevHash);
+        const currentHash = CryptoService2.computeAuditEntryHash(logUuid, now, userStaffId, action, target, details, prevHash);
         sheet.appendRow([
           logUuid,
           now,
@@ -1375,7 +1379,7 @@ var GASApp = (() => {
           throw new Error(`Duplicate Record: \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E27\u0E31\u0E04\u0E0B\u0E35\u0E19 ${dto.VaccineCategory} \u0E40\u0E02\u0E47\u0E21\u0E17\u0E35\u0E48 ${dto.DoseNumber} \u0E21\u0E35\u0E2D\u0E22\u0E39\u0E48\u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A\u0E41\u0E25\u0E49\u0E27`);
         }
         const now = (/* @__PURE__ */ new Date()).toISOString();
-        const uuid = `vac-${CryptoService.generateUuid()}`;
+        const uuid = `vac-${CryptoService2.generateUuid()}`;
         const headers = [
           "VaccinationUUID",
           "StaffID",
@@ -1455,7 +1459,7 @@ var GASApp = (() => {
       return this.sheetRepo.executeWithLock(() => {
         var _a;
         const now = (/* @__PURE__ */ new Date()).toISOString();
-        const uuid = `lab-${CryptoService.generateUuid()}`;
+        const uuid = `lab-${CryptoService2.generateUuid()}`;
         const headers = [
           "LabResultUUID",
           "StaffID",
@@ -1750,7 +1754,7 @@ var GASApp = (() => {
             "IsDeleted"
           ];
           this.sheetRepo.appendRow("DASHBOARD_CACHE", headers, {
-            CacheUUID: `cache-${CryptoService.generateUuid()}`,
+            CacheUUID: `cache-${CryptoService2.generateUuid()}`,
             CacheKey: cacheKey,
             CachedDataJson: JSON.stringify(dataObj),
             CalculatedAt: calculatedAt,
@@ -2074,7 +2078,7 @@ var GASApp = (() => {
         String(entry.success),
         entry.previousHash
       ].join("|");
-      return CryptoService.computeSha256(rawString);
+      return CryptoService2.computeSha256(rawString);
     }
     /**
      * Scans and verifies Hash Chain integrity across an array of audit log entries.
@@ -2285,8 +2289,8 @@ var GASApp = (() => {
      */
     logEvent(actorStaffId, actorRole, action, entityType, entityId, requestId, metadataObj = {}, success = true, failureReason = "", oldValue = "", newValue = "") {
       const sanitizedJson = AuditRedactionUtility.redactToJson(metadataObj);
-      const oldValueHash = oldValue ? CryptoService.computeSha256(oldValue) : "0000000000000000000000000000000000000000000000000000000000000000";
-      const newValueHash = newValue ? CryptoService.computeSha256(newValue) : "0000000000000000000000000000000000000000000000000000000000000000";
+      const oldValueHash = oldValue ? CryptoService2.computeSha256(oldValue) : "0000000000000000000000000000000000000000000000000000000000000000";
+      const newValueHash = newValue ? CryptoService2.computeSha256(newValue) : "0000000000000000000000000000000000000000000000000000000000000000";
       return this.repo.appendLog({
         actorStaffId,
         actorRole,
@@ -2298,7 +2302,7 @@ var GASApp = (() => {
         newValueHash,
         metadataJson: sanitizedJson,
         ipAddress: metadataObj.ipAddress || "10.20.4.12",
-        userAgentHash: metadataObj.userAgent ? CryptoService.computeSha256(metadataObj.userAgent) : "0000000000000000000000000000000000000000000000000000000000000000",
+        userAgentHash: metadataObj.userAgent ? CryptoService2.computeSha256(metadataObj.userAgent) : "0000000000000000000000000000000000000000000000000000000000000000",
         success,
         failureReason
       });
@@ -2575,6 +2579,8 @@ var GASApp = (() => {
           "AccountStatus",
           "FunctionalRole",
           "UserLevel",
+          "ResetTokenHash",
+          "ResetTokenExpiresAt",
           "CreatedAt",
           "CreatedBy",
           "UpdatedAt",
@@ -2954,6 +2960,8 @@ var GASApp = (() => {
           "ACTIVE",
           roleInfo.functionalRole,
           roleInfo.userLevel,
+          "",
+          "",
           now,
           "SYSTEM",
           now,
@@ -2969,7 +2977,7 @@ var GASApp = (() => {
   // src/index.ts
   function doGet(e) {
     var _a;
-    const requestId = CryptoService.generateUuid();
+    const requestId = CryptoService2.generateUuid();
     try {
       const action = ((_a = e.parameter) == null ? void 0 : _a.action) || "ping";
       if (action === "ping") {
@@ -2989,7 +2997,7 @@ var GASApp = (() => {
     }
   }
   function doPost(e) {
-    const requestId = CryptoService.generateUuid();
+    const requestId = CryptoService2.generateUuid();
     try {
       let payload = {};
       if (e.postData && e.postData.contents) {

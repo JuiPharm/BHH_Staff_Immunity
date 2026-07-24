@@ -111,7 +111,7 @@ export const SECURITY_DATABASE_CONFIG: DatabaseConfig = {
       headers: [
         'UserUUID', 'StaffID', 'PasswordHash', 'Salt', 'Iterations',
         'FailedLoginCount', 'LockoutUntil', 'MustChangePassword', 'AccountStatus',
-        'FunctionalRole', 'UserLevel',
+        'FunctionalRole', 'UserLevel', 'ResetTokenHash', 'ResetTokenExpiresAt',
         'CreatedAt', 'CreatedBy', 'UpdatedAt', 'UpdatedBy', 'RecordVersion', 'IsDeleted'
       ]
     },
@@ -407,7 +407,7 @@ function seedUserAccounts(): void {
       const userRow = [
         userUuid, staffId, hash, salt, iterations,
         0, '', false, 'ACTIVE',
-        roleInfo.functionalRole, roleInfo.userLevel,
+        roleInfo.functionalRole, roleInfo.userLevel, '', '',
         now, 'SYSTEM', now, 'SYSTEM', 1, false
       ];
       

@@ -134,7 +134,9 @@ export class ImportService {
           
           // Production Workflow: Automatically provision a user account for the new staff
           // Default password is set to 'password123' and they are forced to change it on first login.
-          this.accountRepo.createAccount(staffId, 'password123', executedBy);
+          const importedRole = rec['FunctionalRole'] || rec['Role'] || 'DATA_OWNER';
+          const importedLevel: 'SUPERUSER' | 'NORMAL_USER' = rec['UserLevel'] || (['INFECTION_CONTROL', 'HR', 'PHYSICIAN', 'ADMIN'].includes(String(importedRole).toUpperCase()) ? 'SUPERUSER' : 'NORMAL_USER');
+          this.accountRepo.createAccount(staffId, 'password123', executedBy, importedRole, importedLevel);
           
           insertedRows++;
         }

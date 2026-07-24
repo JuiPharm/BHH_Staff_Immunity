@@ -50,7 +50,9 @@ export class AccountRepository {
       FailedLoginCount: Number(user.FailedLoginCount) || 0,
       LockoutUntil: user.LockoutUntil ? String(user.LockoutUntil) : undefined,
       MustChangePassword: user.MustChangePassword === true || String(user.MustChangePassword) === 'TRUE',
-      AccountStatus: user.AccountStatus as any || 'ACTIVE',
+      AccountStatus: (user.AccountStatus as any) || 'ACTIVE',
+      FunctionalRole: user.FunctionalRole ? String(user.FunctionalRole) : 'DATA_OWNER',
+      UserLevel: user.UserLevel ? (String(user.UserLevel) as any) : 'NORMAL_USER',
       ResetTokenHash: user.ResetTokenHash ? String(user.ResetTokenHash) : undefined,
       ResetTokenExpiresAt: user.ResetTokenExpiresAt ? String(user.ResetTokenExpiresAt) : undefined,
       CreatedAt: String(user.CreatedAt),
@@ -163,54 +165,64 @@ export class AccountRepository {
   /**
    * Creates a new user account with a hashed password.
    */
-  public createAccount(staffId: string, plainPassword: string, createdBy: string): void {
+  public createAccount(
+    staffId: string,
+    plainPassword = 'password123',
+    createdBy = 'SYSTEM',
+    functionalRole = 'DATA_OWNER',
+    userLevel: 'SUPERUSER' | 'NORMAL_USER' = 'NORMAL_USER'
+  ): void {
     const existing = this.findByStaffId(staffId);
     if (existing) return; // Account already exists
 
     const { hash, salt, iterations } = PasswordService.hashPassword(plainPassword);
     const now = new Date().toISOString();
-    const userUuid = `usr-${Utilities.getUuid()}`;
+    const userUuid = `usr-${typeof CryptoService !== 'undefined' && CryptoService.generateUuid ? CryptoService.generateUuid() : Utilities.getUuid()}`;
 
-    this.sheetRepo.appendRow(
-      'USER_ACCOUNT',
-      [
-        'UserUUID',
-        'StaffID',
-        'PasswordHash',
-        'Salt',
-        'Iterations',
-        'FailedLoginCount',
-        'LockoutUntil',
-        'MustChangePassword',
-        'AccountStatus',
-        'ResetTokenHash',
-        'ResetTokenExpiresAt',
-        'CreatedAt',
-        'CreatedBy',
-        'UpdatedAt',
-        'UpdatedBy',
-        'RecordVersion',
-        'IsDeleted'
-      ],
-      {
-        UserUUID: userUuid,
-        StaffID: staffId,
-        PasswordHash: hash,
-        Salt: salt,
-        Iterations: iterations,
-        FailedLoginCount: 0,
-        LockoutUntil: '',
-        MustChangePassword: true, // Force password change on first login
-        AccountStatus: 'ACTIVE',
-        ResetTokenHash: '',
-        ResetTokenExpiresAt: '',
-        CreatedAt: now,
-        CreatedBy: createdBy,
-        UpdatedAt: now,
-        UpdatedBy: createdBy,
-        RecordVersion: 1,
-        IsDeleted: false
-      }
-    );
+    const headers = [
+      'UserUUID',
+      'StaffID',
+      'PasswordHash',
+      'Salt',
+      'Iterations',
+      'FailedLoginCount',
+      'LockoutUntil',
+      'MustChangePassword',
+      'AccountStatus',
+      'FunctionalRole',
+      'UserLevel',
+      'ResetTokenHash',
+      'ResetTokenExpiresAt',
+      'CreatedAt',
+      'CreatedBy',
+      'UpdatedAt',
+      'UpdatedBy',
+      'RecordVersion',
+      'IsDeleted'
+    ];
+
+    const rowObject = {
+      UserUUID: userUuid,
+      StaffID: staffId,
+      PasswordHash: hash,
+      Salt: salt,
+      Iterations: iterations,
+      FailedLoginCount: 0,
+      LockoutUntil: '',
+      MustChangePassword: true, // Force password change on first login
+      AccountStatus: 'ACTIVE',
+      FunctionalRole: functionalRole,
+      UserLevel: userLevel,
+      ResetTokenHash: '',
+      ResetTokenExpiresAt: '',
+      CreatedAt: now,
+      CreatedBy: createdBy,
+      UpdatedAt: now,
+      UpdatedBy: createdBy,
+      RecordVersion: 1,
+      IsDeleted: false
+    };
+
+    this.sheetRepo.appendRow('USER_ACCOUNT', headers, rowObject);
   }
 }

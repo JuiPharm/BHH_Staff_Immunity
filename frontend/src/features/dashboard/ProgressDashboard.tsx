@@ -1,3 +1,4 @@
+import React from 'react';
 import { Box, Grid, Paper, Typography, LinearProgress } from '@mui/material';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
@@ -22,7 +23,7 @@ export const ProgressDashboard: React.FC<ProgressDashboardProps> = ({ data }) =>
               </Typography>
             </Box>
             <Typography variant="h3" fontWeight={800} color="success.main">
-              {data.completedActionsThisMonth}
+              {data.completedActionsThisMonth ?? 0}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
               การฉีดวัคซีน ผล Lab และ CXR ที่อนุมัติแล้ว
@@ -39,7 +40,7 @@ export const ProgressDashboard: React.FC<ProgressDashboardProps> = ({ data }) =>
               </Typography>
             </Box>
             <Typography variant="h3" fontWeight={800} color="primary.main">
-              {data.newActionsThisMonth}
+              {data.newActionsThisMonth ?? 0}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
               บุคลากรใหม่และวัคซีนเข็มถัดไป
@@ -56,10 +57,10 @@ export const ProgressDashboard: React.FC<ProgressDashboardProps> = ({ data }) =>
               </Typography>
             </Box>
             <Typography variant="h3" fontWeight={800} color="error.main">
-              {data.overdueTrendCount}
+              {data.overdueTrendCount ?? 0}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              ลดลง 14% จากเดือนที่แล้ว
+              {data.overdueTrendMessage || 'คำนวณจากประวัติการอนุมัติจริง'}
             </Typography>
           </Paper>
         </Grid>

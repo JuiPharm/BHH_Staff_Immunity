@@ -1,6 +1,7 @@
 import { DashboardCacheRepository } from '../repositories/DashboardCacheRepository';
 import { StaffRepository } from '../repositories/StaffRepository';
 import { ClinicalRepository } from '../repositories/ClinicalRepository';
+import { SheetRepository } from '../repositories/SheetRepository';
 import { UserRole } from '../types';
 import { FieldMaskingUtil } from '../utils/FieldMaskingUtil';
 
@@ -8,39 +9,82 @@ export class DashboardAggregationService {
   private cacheRepo: DashboardCacheRepository;
   private staffRepo: StaffRepository;
   private clinicalRepo: ClinicalRepository;
+  private sheetRepo: SheetRepository;
 
-  constructor(cacheRepo?: DashboardCacheRepository, staffRepo?: StaffRepository, clinicalRepo?: ClinicalRepository) {
+  constructor(
+    cacheRepo?: DashboardCacheRepository,
+    staffRepo?: StaffRepository,
+    clinicalRepo?: ClinicalRepository,
+    sheetRepo?: SheetRepository
+  ) {
     this.cacheRepo = cacheRepo || new DashboardCacheRepository();
     this.staffRepo = staffRepo || new StaffRepository();
     this.clinicalRepo = clinicalRepo || new ClinicalRepository();
+
+    const clinicalSsId = typeof PropertiesService !== 'undefined'
+      ? PropertiesService.getScriptProperties().getProperty('DB_CLINICAL_SPREADSHEET_ID')
+      : null;
+    this.sheetRepo = sheetRepo || new SheetRepository(clinicalSsId || '1IFJOErjojIQJq02l6i2a022EEy7YIrh1eRTwpxzXJRE');
   }
 
-  /**
-   * Helper: Check if status represents pending verification.
-   */
   private isPending(status: any): boolean {
     const s = String(status || '').toUpperCase();
     return s === 'PENDING' || s === 'PENDING_VERIFICATION';
   }
 
-  /**
-   * Helper: Check if status represents verified.
-   */
   private isVerified(status: any): boolean {
     const s = String(status || '').toUpperCase();
     return s === 'VERIFIED' || s === 'APPROVED';
   }
 
-  /**
-   * Helper: Check if status represents rejected.
-   */
   private isRejected(status: any): boolean {
     const s = String(status || '').toUpperCase();
     return s === 'REJECTED';
   }
 
   /**
-   * Completeness Dashboard Aggregation with 2-tier Caching.
+   * Batch fetches all clinical records in 1 single pass to avoid O(N*K) sheet reads.
+   */
+  private fetchAllClinicalDataInPass(): {
+    staffList: any[];
+    vacMap: Map<string, any[]>;
+    labMap: Map<string, any[]>;
+    cxrMap: Map<string, any[]>;
+    tbMap: Map<string, any[]>;
+    medAssMap: Map<string, any[]>;
+  } {
+    const staffList = this.staffRepo.findAll(false);
+
+    const vacRows = this.sheetRepo.getRows('VACCINATION');
+    const labRows = this.sheetRepo.getRows('LAB_RESULT');
+    const cxrRows = this.sheetRepo.getRows('CHEST_XRAY');
+    const tbRows = this.sheetRepo.getRows('TB_ASSESSMENT');
+    const medAssRows = this.sheetRepo.getRows('MEDICAL_ASSESSMENT');
+
+    const groupByStaff = (rows: any[], staffIdKey = 'StaffID') => {
+      const map = new Map<string, any[]>();
+      rows.forEach((r) => {
+        if (r.IsDeleted || String(r.IsDeleted) === 'TRUE') return;
+        const sid = String(r[staffIdKey] || '').toUpperCase();
+        if (!sid) return;
+        if (!map.has(sid)) map.set(sid, []);
+        map.get(sid)!.push(r);
+      });
+      return map;
+    };
+
+    return {
+      staffList,
+      vacMap: groupByStaff(vacRows),
+      labMap: groupByStaff(labRows),
+      cxrMap: groupByStaff(cxrRows),
+      tbMap: groupByStaff(tbRows),
+      medAssMap: groupByStaff(medAssRows)
+    };
+  }
+
+  /**
+   * Completeness Dashboard Aggregation (Optimized Batch Fast Read).
    */
   public getCompletenessDashboard(userRole: UserRole, forceRefresh = false): any {
     const cacheKey = 'DASHBOARD_COMPLETENESS_SUMMARY';
@@ -58,7 +102,7 @@ export class DashboardAggregationService {
       }
     }
 
-    const staffList = this.staffRepo.findAll(false);
+    const { staffList, vacMap, labMap, cxrMap, tbMap } = this.fetchAllClinicalDataInPass();
     const totalStaff = staffList.length;
 
     let completeCount = 0;
@@ -73,6 +117,7 @@ export class DashboardAggregationService {
     const departmentBreakdown: Record<string, { total: number; complete: number; rate: number }> = {};
 
     staffList.forEach((staff) => {
+      const sid = String(staff.StaffID).toUpperCase();
       const wg = staff.WorkGroup || 'BACKOFFICE';
       const dept = staff.DepartmentCode || 'OTHER';
 
@@ -82,11 +127,10 @@ export class DashboardAggregationService {
       workGroupBreakdown[wg].total++;
       departmentBreakdown[dept].total++;
 
-      // Check all clinical record tables for pending verification
-      const vacs = this.clinicalRepo.findVaccinationsByStaffId(staff.StaffID);
-      const labs = this.clinicalRepo.findLabResultsByStaffId(staff.StaffID);
-      const cxrs = this.clinicalRepo.findChestXraysByStaffId(staff.StaffID);
-      const tbs = this.clinicalRepo.findTbAssessmentsByStaffId(staff.StaffID);
+      const vacs = vacMap.get(sid) || [];
+      const labs = labMap.get(sid) || [];
+      const cxrs = cxrMap.get(sid) || [];
+      const tbs = tbMap.get(sid) || [];
 
       const pendingCount =
         vacs.filter((v) => this.isPending(v.VerificationStatus)).length +
@@ -125,7 +169,7 @@ export class DashboardAggregationService {
     const dataObj = {
       totalStaff,
       completeCount,
-      incompleteCount: totalStaff - completeCount,
+      incompleteCount: Math.max(0, totalStaff - completeCount),
       completionRate,
       workGroupBreakdown,
       departmentBreakdown,
@@ -140,7 +184,7 @@ export class DashboardAggregationService {
   }
 
   /**
-   * Follow-up Dashboard Aggregation with Dynamic Real Date Differences.
+   * Follow-up Dashboard Aggregation (Optimized Batch Fast Read).
    */
   public getFollowUpDashboard(userRole: UserRole, forceRefresh = false): any {
     const cacheKey = 'DASHBOARD_FOLLOWUP_SUMMARY';
@@ -152,7 +196,7 @@ export class DashboardAggregationService {
       }
     }
 
-    const staffList = this.staffRepo.findAll(false);
+    const { staffList, vacMap, labMap, cxrMap, medAssMap } = this.fetchAllClinicalDataInPass();
     const nowMs = Date.now();
     const msPerDay = 24 * 60 * 60 * 1000;
 
@@ -167,10 +211,11 @@ export class DashboardAggregationService {
     let rejectedEvidenceCount = 0;
 
     staffList.forEach((staff) => {
-      const vacs = this.clinicalRepo.findVaccinationsByStaffId(staff.StaffID);
-      const labs = this.clinicalRepo.findLabResultsByStaffId(staff.StaffID);
-      const cxrs = this.clinicalRepo.findChestXraysByStaffId(staff.StaffID);
-      const medAss = this.clinicalRepo.findMedicalAssessmentsByStaffId(staff.StaffID);
+      const sid = String(staff.StaffID).toUpperCase();
+      const vacs = vacMap.get(sid) || [];
+      const labs = labMap.get(sid) || [];
+      const cxrs = cxrMap.get(sid) || [];
+      const medAss = medAssMap.get(sid) || [];
 
       const verifiedVacs = vacs.filter((v) => this.isVerified(v.VerificationStatus));
       const rejectedVacs = vacs.filter((v) => this.isRejected(v.VerificationStatus));
@@ -179,23 +224,19 @@ export class DashboardAggregationService {
 
       rejectedEvidenceCount += rejectedVacs.length + rejectedLabs.length + rejectedCxrs.length;
 
-      // Vaccine requirement
       if (verifiedVacs.length === 0) {
         vaccineRequired++;
       }
 
-      // Clinical group requirement
       if (staff.WorkGroup === 'CLINICAL') {
         if (labs.filter((l) => this.isVerified(l.VerificationStatus)).length === 0) labRequired++;
         if (cxrs.filter((c) => this.isVerified(c.VerificationStatus)).length === 0) cxrRequired++;
       }
 
-      // Physician Review requirement
       if (medAss.length === 0) {
         physicianReviewRequired++;
       }
 
-      // Dynamic Due Date & Overdue Calculation based on Expiry Date / Next Review Date
       let earliestDueDate: number | null = null;
 
       [...vacs, ...cxrs].forEach((rec: any) => {
@@ -217,7 +258,6 @@ export class DashboardAggregationService {
       });
 
       if (earliestDueDate === null && verifiedVacs.length === 0) {
-        // Staff has zero verified vaccines -> classified as overdue
         overdueCount++;
       } else if (earliestDueDate !== null) {
         const daysDiff = Math.ceil((earliestDueDate - nowMs) / msPerDay);
@@ -254,7 +294,7 @@ export class DashboardAggregationService {
   }
 
   /**
-   * Progress Dashboard Aggregation with Real Monthly Historical Breakdown.
+   * Progress Dashboard Aggregation (Real Historical Data & Dynamic Trend %).
    */
   public getProgressDashboard(userRole: UserRole, forceRefresh = false): any {
     const cacheKey = 'DASHBOARD_PROGRESS_SUMMARY';
@@ -266,10 +306,9 @@ export class DashboardAggregationService {
       }
     }
 
-    const staffList = this.staffRepo.findAll(false);
+    const { staffList, vacMap } = this.fetchAllClinicalDataInPass();
     const totalStaff = staffList.length || 1;
 
-    // Monthly historical progress calculation based on record dates
     const now = new Date();
     const months: { label: string; year: number; month: number }[] = [];
 
@@ -291,7 +330,8 @@ export class DashboardAggregationService {
 
       let completedCountAtMonth = 0;
       staffList.forEach((s) => {
-        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+        const sid = String(s.StaffID).toUpperCase();
+        const vacs = vacMap.get(sid) || [];
         const verifiedBeforeMonth = vacs.filter((v) => {
           if (!this.isVerified(v.VerificationStatus)) return false;
           const vDate = new Date(v.AdministeredDate || v.CreatedAt).getTime();
@@ -307,14 +347,14 @@ export class DashboardAggregationService {
       return { month: m.label, rate };
     });
 
-    // Count completions this current month
     const startOfCurrentMonthMs = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 
     staffList.forEach((s) => {
+      const sid = String(s.StaffID).toUpperCase();
       const createdMs = new Date(s.CreatedAt || s.StartDate).getTime();
       if (createdMs >= startOfCurrentMonthMs) newThisMonth++;
 
-      const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+      const vacs = vacMap.get(sid) || [];
       const verifiedThisMonth = vacs.filter((v) => {
         if (!this.isVerified(v.VerificationStatus)) return false;
         const vDate = new Date(v.AdministeredDate || v.CreatedAt).getTime();
@@ -324,17 +364,42 @@ export class DashboardAggregationService {
       if (verifiedThisMonth.length >= 1) completedThisMonth++;
     });
 
-    const currentRate = completionTrend[completionTrend.length - 1]?.rate || 0;
-    const pendingCount = staffList.filter((s) => {
-      const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+    const overdueCountCurrent = staffList.filter((s) => {
+      const sid = String(s.StaffID).toUpperCase();
+      const vacs = vacMap.get(sid) || [];
       return vacs.filter((v) => this.isVerified(v.VerificationStatus)).length === 0;
     }).length;
+
+    // Calculate real dynamic trend % vs last month
+    const prevMonthEndMs = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59).getTime();
+    const overdueCountPrevMonth = staffList.filter((s) => {
+      const sid = String(s.StaffID).toUpperCase();
+      const vacs = vacMap.get(sid) || [];
+      return vacs.filter((v) => {
+        if (!this.isVerified(v.VerificationStatus)) return false;
+        return new Date(v.AdministeredDate || v.CreatedAt).getTime() <= prevMonthEndMs;
+      }).length === 0;
+    }).length;
+
+    let overdueTrendMessage = 'คำนวณจากประวัติการอนุมัติจริง';
+    if (overdueCountPrevMonth > 0) {
+      const diff = overdueCountCurrent - overdueCountPrevMonth;
+      const pct = Math.abs(Math.round((diff / overdueCountPrevMonth) * 100));
+      if (diff < 0) {
+        overdueTrendMessage = `ลดลง ${pct}% จากเดือนที่แล้ว`;
+      } else if (diff > 0) {
+        overdueTrendMessage = `เพิ่มขึ้น ${pct}% จากเดือนที่แล้ว`;
+      } else {
+        overdueTrendMessage = `เท่ากับเดือนที่แล้ว (ไม่เปลี่ยนแปลง)`;
+      }
+    }
 
     const dataObj = {
       completionTrend,
       completedActionsThisMonth: completedThisMonth,
       newActionsThisMonth: newThisMonth,
-      overdueTrendCount: pendingCount,
+      overdueTrendCount: overdueCountCurrent,
+      overdueTrendMessage,
       calculatedAt: new Date().toISOString()
     };
 
@@ -359,10 +424,10 @@ export class DashboardAggregationService {
   }
 
   /**
-   * Drill-down Staff Detail List by Category from Real Database!
+   * Drill-down Staff Detail List by Category from Real Database (Optimized Fast Pass).
    */
   public getDrillDownDetail(category: string, userRole: UserRole): any {
-    const staffList = this.staffRepo.findAll(false);
+    const { staffList, vacMap, labMap, cxrMap, tbMap, medAssMap } = this.fetchAllClinicalDataInPass();
     const catUpper = String(category || 'TOTAL').toUpperCase();
     const nowMs = Date.now();
     const msPerDay = 24 * 60 * 60 * 1000;
@@ -373,20 +438,23 @@ export class DashboardAggregationService {
       filteredStaff = staffList;
     } else if (catUpper === 'COMPLETE') {
       filteredStaff = staffList.filter((s) => {
-        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+        const sid = String(s.StaffID).toUpperCase();
+        const vacs = vacMap.get(sid) || [];
         return vacs.some((v) => this.isVerified(v.VerificationStatus));
       });
     } else if (catUpper === 'INCOMPLETE') {
       filteredStaff = staffList.filter((s) => {
-        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+        const sid = String(s.StaffID).toUpperCase();
+        const vacs = vacMap.get(sid) || [];
         return !vacs.some((v) => this.isVerified(v.VerificationStatus));
       });
     } else if (catUpper === 'PENDING_VERIFICATION') {
       filteredStaff = staffList.filter((s) => {
-        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
-        const labs = this.clinicalRepo.findLabResultsByStaffId(s.StaffID);
-        const cxrs = this.clinicalRepo.findChestXraysByStaffId(s.StaffID);
-        const tbs = this.clinicalRepo.findTbAssessmentsByStaffId(s.StaffID);
+        const sid = String(s.StaffID).toUpperCase();
+        const vacs = vacMap.get(sid) || [];
+        const labs = labMap.get(sid) || [];
+        const cxrs = cxrMap.get(sid) || [];
+        const tbs = tbMap.get(sid) || [];
 
         return (
           vacs.some((v) => this.isPending(v.VerificationStatus)) ||
@@ -397,29 +465,34 @@ export class DashboardAggregationService {
       });
     } else if (catUpper === 'VACCINE_REQUIRED') {
       filteredStaff = staffList.filter((s) => {
-        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+        const sid = String(s.StaffID).toUpperCase();
+        const vacs = vacMap.get(sid) || [];
         return !vacs.some((v) => this.isVerified(v.VerificationStatus));
       });
     } else if (catUpper === 'LAB_REQUIRED') {
       filteredStaff = staffList.filter((s) => {
         if (s.WorkGroup !== 'CLINICAL') return false;
-        const labs = this.clinicalRepo.findLabResultsByStaffId(s.StaffID);
+        const sid = String(s.StaffID).toUpperCase();
+        const labs = labMap.get(sid) || [];
         return !labs.some((l) => this.isVerified(l.VerificationStatus));
       });
     } else if (catUpper === 'CXR_REQUIRED') {
       filteredStaff = staffList.filter((s) => {
         if (s.WorkGroup !== 'CLINICAL') return false;
-        const cxrs = this.clinicalRepo.findChestXraysByStaffId(s.StaffID);
+        const sid = String(s.StaffID).toUpperCase();
+        const cxrs = cxrMap.get(sid) || [];
         return !cxrs.some((c) => this.isVerified(c.VerificationStatus));
       });
     } else if (catUpper === 'PHYSICIAN_REVIEW_REQUIRED') {
       filteredStaff = staffList.filter((s) => {
-        const medAss = this.clinicalRepo.findMedicalAssessmentsByStaffId(s.StaffID);
+        const sid = String(s.StaffID).toUpperCase();
+        const medAss = medAssMap.get(sid) || [];
         return medAss.length === 0;
       });
     } else if (catUpper === 'OVERDUE') {
       filteredStaff = staffList.filter((s) => {
-        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+        const sid = String(s.StaffID).toUpperCase();
+        const vacs = vacMap.get(sid) || [];
         const verifiedVacs = vacs.filter((v) => this.isVerified(v.VerificationStatus));
         if (verifiedVacs.length === 0) return true;
 
@@ -431,8 +504,9 @@ export class DashboardAggregationService {
       });
     } else if (catUpper === 'DUE_7_DAYS') {
       filteredStaff = staffList.filter((s) => {
-        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
-        const cxrs = this.clinicalRepo.findChestXraysByStaffId(s.StaffID);
+        const sid = String(s.StaffID).toUpperCase();
+        const vacs = vacMap.get(sid) || [];
+        const cxrs = cxrMap.get(sid) || [];
         let match = false;
         [...vacs, ...cxrs].forEach((rec: any) => {
           if (rec.ExpiryDate) {
@@ -444,8 +518,9 @@ export class DashboardAggregationService {
       });
     } else if (catUpper === 'DUE_30_DAYS') {
       filteredStaff = staffList.filter((s) => {
-        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
-        const cxrs = this.clinicalRepo.findChestXraysByStaffId(s.StaffID);
+        const sid = String(s.StaffID).toUpperCase();
+        const vacs = vacMap.get(sid) || [];
+        const cxrs = cxrMap.get(sid) || [];
         let match = false;
         [...vacs, ...cxrs].forEach((rec: any) => {
           if (rec.ExpiryDate) {
@@ -457,8 +532,9 @@ export class DashboardAggregationService {
       });
     } else if (catUpper === 'DUE_60_DAYS') {
       filteredStaff = staffList.filter((s) => {
-        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
-        const cxrs = this.clinicalRepo.findChestXraysByStaffId(s.StaffID);
+        const sid = String(s.StaffID).toUpperCase();
+        const vacs = vacMap.get(sid) || [];
+        const cxrs = cxrMap.get(sid) || [];
         let match = false;
         [...vacs, ...cxrs].forEach((rec: any) => {
           if (rec.ExpiryDate) {
@@ -470,9 +546,10 @@ export class DashboardAggregationService {
       });
     } else if (catUpper === 'REJECTED_EVIDENCE') {
       filteredStaff = staffList.filter((s) => {
-        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
-        const labs = this.clinicalRepo.findLabResultsByStaffId(s.StaffID);
-        const cxrs = this.clinicalRepo.findChestXraysByStaffId(s.StaffID);
+        const sid = String(s.StaffID).toUpperCase();
+        const vacs = vacMap.get(sid) || [];
+        const labs = labMap.get(sid) || [];
+        const cxrs = cxrMap.get(sid) || [];
         return (
           vacs.some((v) => this.isRejected(v.VerificationStatus)) ||
           labs.some((l) => this.isRejected(l.VerificationStatus)) ||
@@ -486,8 +563,9 @@ export class DashboardAggregationService {
     }
 
     const items = filteredStaff.map((s) => {
+      const sid = String(s.StaffID).toUpperCase();
       const name = `${s.TitleTH || ''} ${s.FirstName || ''} ${s.LastName || ''}`.trim() || s.StaffID;
-      const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+      const vacs = vacMap.get(sid) || [];
       const isComplete = vacs.some((v) => this.isVerified(v.VerificationStatus));
       return {
         staffId: s.StaffID,

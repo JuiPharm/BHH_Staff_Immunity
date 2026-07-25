@@ -10,7 +10,18 @@ interface CompletenessDashboardProps {
 }
 
 export const CompletenessDashboard: React.FC<CompletenessDashboardProps> = ({ data, onDrillDown }) => {
-  if (!data) return null;
+  const safeData = data || {
+    totalStaff: 0,
+    completeCount: 0,
+    incompleteCount: 0,
+    completionRate: 0,
+    pendingVerificationQueue: 0,
+    workGroupBreakdown: {
+      CLINICAL: { total: 0, complete: 0, rate: 0 },
+      FRONTLINE: { total: 0, complete: 0, rate: 0 },
+      BACKOFFICE: { total: 0, complete: 0, rate: 0 }
+    }
+  };
 
   return (
     <Box sx={{ mt: 2 }}>
@@ -26,7 +37,7 @@ export const CompletenessDashboard: React.FC<CompletenessDashboardProps> = ({ da
                 บุคลากรทั้งหมด (TOTAL STAFF)
               </Typography>
               <Typography variant="h3" sx={{ color: '#0A2540', fontWeight: 800, my: 1 }}>
-                {data.totalStaff}
+                {safeData.totalStaff}
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 ครอบคลุมบุคลากรทุกกลุ่มงาน
@@ -45,12 +56,12 @@ export const CompletenessDashboard: React.FC<CompletenessDashboardProps> = ({ da
                 ภูมิคุ้มกันสมบูรณ์ (COMPLETE)
               </Typography>
               <Typography variant="h3" sx={{ color: '#2E7D32', fontWeight: 800, my: 1 }}>
-                {data.completeCount}
+                {safeData.completeCount}
               </Typography>
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
                 <CheckCircleIcon color="success" fontSize="small" sx={{ mr: 0.5 }} />
                 <Typography variant="body2" fontWeight={700} color="success.main">
-                  {data.completionRate}% ความพร้อมสถาบัน
+                  {safeData.completionRate}% ความพร้อมสถาบัน
                 </Typography>
               </Box>
             </CardContent>
@@ -67,12 +78,12 @@ export const CompletenessDashboard: React.FC<CompletenessDashboardProps> = ({ da
                 ต้องรับวัคซีน/ตรวจเพิ่ม (INCOMPLETE)
               </Typography>
               <Typography variant="h3" sx={{ color: '#E53935', fontWeight: 800, my: 1 }}>
-                {data.incompleteCount}
+                {safeData.incompleteCount}
               </Typography>
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
                 <WarningAmberIcon color="error" fontSize="small" sx={{ mr: 0.5 }} />
                 <Typography variant="body2" color="error.main" fontWeight={700}>
-                  {100 - data.completionRate}% ยังไม่ครบตามเกณฑ์
+                  {Math.max(0, 100 - safeData.completionRate)}% ยังไม่ครบตามเกณฑ์
                 </Typography>
               </Box>
             </CardContent>
@@ -89,7 +100,7 @@ export const CompletenessDashboard: React.FC<CompletenessDashboardProps> = ({ da
                 รอการอนุมัติเอกสาร (PENDING)
               </Typography>
               <Typography variant="h3" sx={{ color: '#ED6C02', fontWeight: 800, my: 1 }}>
-                {data.pendingVerificationQueue}
+                {safeData.pendingVerificationQueue}
               </Typography>
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
                 <PendingActionsIcon color="warning" fontSize="small" sx={{ mr: 0.5 }} />
@@ -108,7 +119,7 @@ export const CompletenessDashboard: React.FC<CompletenessDashboardProps> = ({ da
           สถิติแยกตามกลุ่มงาน (Work Group Breakdown)
         </Typography>
         <Grid container spacing={3}>
-          {Object.entries(data.workGroupBreakdown || {}).map(([group, stats]: [string, any]) => (
+          {Object.entries(safeData.workGroupBreakdown || {}).map(([group, stats]: [string, any]) => (
             <Grid item xs={12} md={4} key={group}>
               <Box sx={{ p: 2, border: '1px solid #E0E0E0', borderRadius: 2, backgroundColor: '#F8FAFC' }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
@@ -119,15 +130,15 @@ export const CompletenessDashboard: React.FC<CompletenessDashboardProps> = ({ da
                     sx={{ fontWeight: 700 }}
                   />
                   <Typography variant="subtitle2" fontWeight={800} color="primary">
-                    {stats.rate}%
+                    {stats?.rate || 0}%
                   </Typography>
                 </Box>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                  ครบเกณฑ์ {stats.complete} จาก {stats.total} คน
+                  ครบเกณฑ์ {stats?.complete || 0} จาก {stats?.total || 0} คน
                 </Typography>
                 <LinearProgress
                   variant="determinate"
-                  value={stats.rate}
+                  value={stats?.rate || 0}
                   sx={{ height: 8, borderRadius: 4, backgroundColor: '#E0E0E0' }}
                 />
               </Box>

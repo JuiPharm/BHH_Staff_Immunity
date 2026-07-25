@@ -10,7 +10,18 @@ interface FollowUpDashboardProps {
 }
 
 export const FollowUpDashboard: React.FC<FollowUpDashboardProps> = ({ data, onDrillDown }) => {
-  if (!data) return null;
+  const safeData = data || {
+    overdueCount: 0,
+    dueWithin7Days: 0,
+    dueWithin30Days: 0,
+    dueWithin60Days: 0,
+    vaccineRequired: 0,
+    labRequired: 0,
+    cxrRequired: 0,
+    physicianReviewRequired: 0,
+    rejectedEvidenceCount: 0,
+    emailFailedCount: 0
+  };
 
   return (
     <Box sx={{ mt: 2 }}>
@@ -29,7 +40,7 @@ export const FollowUpDashboard: React.FC<FollowUpDashboardProps> = ({ data, onDr
                 <AlarmIcon color="error" />
               </Box>
               <Typography variant="h3" sx={{ color: '#D32F2F', fontWeight: 800, my: 1 }}>
-                {data.overdueCount}
+                {safeData.overdueCount}
               </Typography>
               <Typography variant="body2" color="error.dark" fontWeight={600}>
                 ต้องเร่งรัดติดตามทันที
@@ -51,7 +62,7 @@ export const FollowUpDashboard: React.FC<FollowUpDashboardProps> = ({ data, onDr
                 <EventAvailableIcon color="warning" />
               </Box>
               <Typography variant="h3" sx={{ color: '#ED6C02', fontWeight: 800, my: 1 }}>
-                {data.dueWithin7Days}
+                {safeData.dueWithin7Days}
               </Typography>
               <Typography variant="body2" color="warning.dark" fontWeight={600}>
                 ต้องได้รับการแจ้งเตือน
@@ -73,7 +84,7 @@ export const FollowUpDashboard: React.FC<FollowUpDashboardProps> = ({ data, onDr
                 <EventAvailableIcon color="primary" />
               </Box>
               <Typography variant="h3" sx={{ color: '#1976D2', fontWeight: 800, my: 1 }}>
-                {data.dueWithin30Days}
+                {safeData.dueWithin30Days}
               </Typography>
               <Typography variant="body2" color="primary.dark" fontWeight={600}>
                 เตรียมการนัดหมาย
@@ -95,7 +106,7 @@ export const FollowUpDashboard: React.FC<FollowUpDashboardProps> = ({ data, onDr
                 <EventAvailableIcon sx={{ color: '#9C27B0' }} />
               </Box>
               <Typography variant="h3" sx={{ color: '#9C27B0', fontWeight: 800, my: 1 }}>
-                {data.dueWithin60Days}
+                {safeData.dueWithin60Days}
               </Typography>
               <Typography variant="body2" sx={{ color: '#7B1FA2' }} fontWeight={600}>
                 วางแผนล่วงหน้า
@@ -115,7 +126,7 @@ export const FollowUpDashboard: React.FC<FollowUpDashboardProps> = ({ data, onDr
             <Box sx={{ p: 2, border: '1px solid #E0E0E0', borderRadius: 2 }}>
               <Typography variant="body2" color="text.secondary">ฉีดวัคซีนเพิ่ม (Vaccine Required)</Typography>
               <Typography variant="h4" fontWeight={800} color="primary" sx={{ mt: 1 }}>
-                {data.vaccineRequired}
+                {safeData.vaccineRequired}
               </Typography>
             </Box>
           </Grid>
@@ -123,7 +134,7 @@ export const FollowUpDashboard: React.FC<FollowUpDashboardProps> = ({ data, onDr
             <Box sx={{ p: 2, border: '1px solid #E0E0E0', borderRadius: 2 }}>
               <Typography variant="body2" color="text.secondary">เจาะเลือดตรวจ (Lab Required)</Typography>
               <Typography variant="h4" fontWeight={800} color="secondary" sx={{ mt: 1 }}>
-                {data.labRequired}
+                {safeData.labRequired}
               </Typography>
             </Box>
           </Grid>
@@ -131,7 +142,7 @@ export const FollowUpDashboard: React.FC<FollowUpDashboardProps> = ({ data, onDr
             <Box sx={{ p: 2, border: '1px solid #E0E0E0', borderRadius: 2 }}>
               <Typography variant="body2" color="text.secondary">ถ่ายภาพปอด (CXR Required)</Typography>
               <Typography variant="h4" fontWeight={800} color="warning.main" sx={{ mt: 1 }}>
-                {data.cxrRequired}
+                {safeData.cxrRequired}
               </Typography>
             </Box>
           </Grid>
@@ -139,7 +150,7 @@ export const FollowUpDashboard: React.FC<FollowUpDashboardProps> = ({ data, onDr
             <Box sx={{ p: 2, border: '1px solid #E0E0E0', borderRadius: 2 }}>
               <Typography variant="body2" color="text.secondary">รอแพทย์ประเมิน (Physician Review)</Typography>
               <Typography variant="h4" fontWeight={800} color="error.main" sx={{ mt: 1 }}>
-                {data.physicianReviewRequired}
+                {safeData.physicianReviewRequired}
               </Typography>
             </Box>
           </Grid>
@@ -149,7 +160,7 @@ export const FollowUpDashboard: React.FC<FollowUpDashboardProps> = ({ data, onDr
         <Box sx={{ display: 'flex', gap: 2, mt: 3 }}>
           <Chip
             icon={<ErrorOutlineIcon />}
-            label={`เอกสารถูกปฏิเสธ (Rejected Evidence): ${data.rejectedEvidenceCount} รายการ`}
+            label={`เอกสารถูกปฏิเสธ (Rejected Evidence): ${safeData.rejectedEvidenceCount} รายการ`}
             color="error"
             variant="outlined"
             onClick={() => onDrillDown('REJECTED_EVIDENCE')}
@@ -157,7 +168,7 @@ export const FollowUpDashboard: React.FC<FollowUpDashboardProps> = ({ data, onDr
           />
           <Chip
             icon={<ErrorOutlineIcon />}
-            label={`ส่งอีเมลล้มเหลว (Email Failed): ${data.emailFailedCount} รายการ`}
+            label={`ส่งอีเมลล้มเหลว (Email Failed): ${safeData.emailFailedCount} รายการ`}
             color="warning"
             variant="outlined"
             onClick={() => onDrillDown('EMAIL_FAILED')}

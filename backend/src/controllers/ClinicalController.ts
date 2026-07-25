@@ -12,20 +12,24 @@ export class ClinicalController {
   }
 
   /**
-   * Add Vaccination Record (Data Owner BLOCKED from direct edit/creation without evidence upload; IC & Physician allowed).
+   * Add Vaccination Record.
+   * Allows DATA_OWNER / NORMAL_USER to submit pending evidence records for their own StaffID.
+   * Blocks DATA_OWNER / NORMAL_USER from modifying other staff's records or creating auto-verified records.
    */
   public addVaccination(userRole: UserRole, userStaffId: string, payload: Partial<VaccinationDTO>, requestId: string): GoogleAppsScript.Content.TextOutput {
-    // Data Owner write block
-    if (userRole === 'DATA_OWNER') {
-      return ResponseHelper.error(
-        'FORBIDDEN',
-        'บุคลากรเจ้าของข้อมูลไม่ได้รับอนุญาตให้แก้ไขหรือเพิ่มบันทึกวัคซีนโดยตรง กรุณาใช้ฟังก์ชันอัปโหลดเอกสารหลักฐาน',
-        requestId,
-        403
-      );
+    const targetStaffId = payload.StaffID || (payload as any).staffId || userStaffId;
+
+    // Enforcement for DATA_OWNER / NORMAL_USER
+    if (userRole === 'DATA_OWNER' || userRole === 'NORMAL_USER') {
+      if (targetStaffId.toUpperCase() !== userStaffId.toUpperCase()) {
+        return ResponseHelper.error('FORBIDDEN', 'เจ้าของข้อมูลสามารถยื่นเอกสารเฉพาะของตนเองเท่านั้น', requestId, 403);
+      }
+      // Force verification status to PENDING_VERIFICATION for self-submitted records
+      payload.VerificationStatus = 'PENDING_VERIFICATION' as any;
+      payload.StaffID = userStaffId;
     }
 
-    const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, 'CREATE_HEALTH_RECORD', payload.StaffID, requestId);
+    const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, 'CREATE_HEALTH_RECORD', targetStaffId, requestId);
     if (!auth.isAuthorized) {
       return auth.errorResponse!;
     }
@@ -42,11 +46,17 @@ export class ClinicalController {
    * Add Lab Result Record.
    */
   public addLabResult(userRole: UserRole, userStaffId: string, payload: Partial<LabResultDTO>, requestId: string): GoogleAppsScript.Content.TextOutput {
-    if (userRole === 'DATA_OWNER') {
-      return ResponseHelper.error('FORBIDDEN', 'บุคลากรเจ้าของข้อมูลไม่ได้รับอนุญาตให้เพิ่มผล Lab โดยตรง', requestId, 403);
+    const targetStaffId = payload.StaffID || (payload as any).staffId || userStaffId;
+
+    if (userRole === 'DATA_OWNER' || userRole === 'NORMAL_USER') {
+      if (targetStaffId.toUpperCase() !== userStaffId.toUpperCase()) {
+        return ResponseHelper.error('FORBIDDEN', 'เจ้าของข้อมูลสามารถยื่นผล Lab เฉพาะของตนเองเท่านั้น', requestId, 403);
+      }
+      payload.VerificationStatus = 'PENDING_VERIFICATION' as any;
+      payload.StaffID = userStaffId;
     }
 
-    const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, 'CREATE_HEALTH_RECORD', payload.StaffID, requestId);
+    const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, 'CREATE_HEALTH_RECORD', targetStaffId, requestId);
     if (!auth.isAuthorized) {
       return auth.errorResponse!;
     }

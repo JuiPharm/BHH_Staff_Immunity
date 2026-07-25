@@ -1986,18 +1986,20 @@ var GASApp = (() => {
       this.service = service || new ClinicalService();
     }
     /**
-     * Add Vaccination Record (Data Owner BLOCKED from direct edit/creation without evidence upload; IC & Physician allowed).
+     * Add Vaccination Record.
+     * Allows DATA_OWNER / NORMAL_USER to submit pending evidence records for their own StaffID.
+     * Blocks DATA_OWNER / NORMAL_USER from modifying other staff's records or creating auto-verified records.
      */
     addVaccination(userRole, userStaffId, payload, requestId) {
-      if (userRole === "DATA_OWNER") {
-        return ResponseHelper.error(
-          "FORBIDDEN",
-          "\u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23\u0E40\u0E08\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E23\u0E31\u0E1A\u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15\u0E43\u0E2B\u0E49\u0E41\u0E01\u0E49\u0E44\u0E02\u0E2B\u0E23\u0E37\u0E2D\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E27\u0E31\u0E04\u0E0B\u0E35\u0E19\u0E42\u0E14\u0E22\u0E15\u0E23\u0E07 \u0E01\u0E23\u0E38\u0E13\u0E32\u0E43\u0E0A\u0E49\u0E1F\u0E31\u0E07\u0E01\u0E4C\u0E0A\u0E31\u0E19\u0E2D\u0E31\u0E1B\u0E42\u0E2B\u0E25\u0E14\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E2B\u0E25\u0E31\u0E01\u0E10\u0E32\u0E19",
-          requestId,
-          403
-        );
+      const targetStaffId = payload.StaffID || payload.staffId || userStaffId;
+      if (userRole === "DATA_OWNER" || userRole === "NORMAL_USER") {
+        if (targetStaffId.toUpperCase() !== userStaffId.toUpperCase()) {
+          return ResponseHelper.error("FORBIDDEN", "\u0E40\u0E08\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2A\u0E32\u0E21\u0E32\u0E23\u0E16\u0E22\u0E37\u0E48\u0E19\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E02\u0E2D\u0E07\u0E15\u0E19\u0E40\u0E2D\u0E07\u0E40\u0E17\u0E48\u0E32\u0E19\u0E31\u0E49\u0E19", requestId, 403);
+        }
+        payload.VerificationStatus = "PENDING_VERIFICATION";
+        payload.StaffID = userStaffId;
       }
-      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "CREATE_HEALTH_RECORD", payload.StaffID, requestId);
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "CREATE_HEALTH_RECORD", targetStaffId, requestId);
       if (!auth.isAuthorized) {
         return auth.errorResponse;
       }
@@ -2012,10 +2014,15 @@ var GASApp = (() => {
      * Add Lab Result Record.
      */
     addLabResult(userRole, userStaffId, payload, requestId) {
-      if (userRole === "DATA_OWNER") {
-        return ResponseHelper.error("FORBIDDEN", "\u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23\u0E40\u0E08\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E23\u0E31\u0E1A\u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15\u0E43\u0E2B\u0E49\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E1C\u0E25 Lab \u0E42\u0E14\u0E22\u0E15\u0E23\u0E07", requestId, 403);
+      const targetStaffId = payload.StaffID || payload.staffId || userStaffId;
+      if (userRole === "DATA_OWNER" || userRole === "NORMAL_USER") {
+        if (targetStaffId.toUpperCase() !== userStaffId.toUpperCase()) {
+          return ResponseHelper.error("FORBIDDEN", "\u0E40\u0E08\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2A\u0E32\u0E21\u0E32\u0E23\u0E16\u0E22\u0E37\u0E48\u0E19\u0E1C\u0E25 Lab \u0E40\u0E09\u0E1E\u0E32\u0E30\u0E02\u0E2D\u0E07\u0E15\u0E19\u0E40\u0E2D\u0E07\u0E40\u0E17\u0E48\u0E32\u0E19\u0E31\u0E49\u0E19", requestId, 403);
+        }
+        payload.VerificationStatus = "PENDING_VERIFICATION";
+        payload.StaffID = userStaffId;
       }
-      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "CREATE_HEALTH_RECORD", payload.StaffID, requestId);
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "CREATE_HEALTH_RECORD", targetStaffId, requestId);
       if (!auth.isAuthorized) {
         return auth.errorResponse;
       }

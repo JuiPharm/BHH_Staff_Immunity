@@ -4434,14 +4434,10 @@ var GASApp = (() => {
   function setupAllDatabases() {
     const props = PropertiesService.getScriptProperties();
     const TARGET_FOLDER_ID = "1lQBZKII-qH2lPonIyijNy5RXaaos9OQk";
-    props.setProperty("DB_SECURITY_SPREADSHEET_ID", "1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8");
     PasswordService.getPepper();
     [CLINICAL_DATABASE_CONFIG, SECURITY_DATABASE_CONFIG, AUDIT_DATABASE_CONFIG].forEach((config) => {
       let ss = null;
       let existingId = props.getProperty(config.propertyKey);
-      if (config.propertyKey === "DB_SECURITY_SPREADSHEET_ID") {
-        existingId = "1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8";
-      }
       if (existingId) {
         try {
           ss = SpreadsheetApp.openById(existingId);
@@ -4497,8 +4493,20 @@ var GASApp = (() => {
     const props = PropertiesService.getScriptProperties();
     const repairedSheets = [];
     const appendedHeaders = {};
+    const TARGET_FOLDER_ID = "1lQBZKII-qH2lPonIyijNy5RXaaos9OQk";
     [CLINICAL_DATABASE_CONFIG, SECURITY_DATABASE_CONFIG, AUDIT_DATABASE_CONFIG].forEach((config) => {
-      const ssId = props.getProperty(config.propertyKey) || (config.propertyKey === "DB_SECURITY_SPREADSHEET_ID" ? "1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8" : null);
+      let ssId = props.getProperty(config.propertyKey);
+      if (!ssId) {
+        try {
+          const folder = DriveApp.getFolderById(TARGET_FOLDER_ID);
+          const files = folder.getFilesByName(config.spreadsheetTitle);
+          if (files.hasNext()) {
+            ssId = files.next().getId();
+            props.setProperty(config.propertyKey, ssId);
+          }
+        } catch (e) {
+        }
+      }
       if (!ssId) return;
       try {
         const ss = SpreadsheetApp.openById(ssId);

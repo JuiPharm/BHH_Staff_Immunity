@@ -216,14 +216,11 @@ export const AUDIT_DATABASE_CONFIG: DatabaseConfig = {
 };
 
 /**
- * Bootstrapper function to create Spreadsheets and Sheets automatically
+ * Bootstrapper function to create Spreadsheets and Sheets automatically inside Target Drive Folder
  */
 export function setupAllDatabases(): void {
   const props = PropertiesService.getScriptProperties();
   const TARGET_FOLDER_ID = '1lQBZKII-qH2lPonIyijNy5RXaaos9OQk';
-
-  // Force Security DB to use user-specified Sheet ID
-  props.setProperty('DB_SECURITY_SPREADSHEET_ID', '1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8');
 
   // Initialize Password Pepper
   PasswordService.getPepper();
@@ -231,10 +228,6 @@ export function setupAllDatabases(): void {
   [CLINICAL_DATABASE_CONFIG, SECURITY_DATABASE_CONFIG, AUDIT_DATABASE_CONFIG].forEach((config) => {
     let ss: GoogleAppsScript.Spreadsheet.Spreadsheet | null = null;
     let existingId = props.getProperty(config.propertyKey);
-
-    if (config.propertyKey === 'DB_SECURITY_SPREADSHEET_ID') {
-      existingId = '1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8';
-    }
 
     if (existingId) {
       try {
@@ -302,9 +295,23 @@ export function repairSystemSchema(): { repairedSheets: string[]; appendedHeader
   const props = PropertiesService.getScriptProperties();
   const repairedSheets: string[] = [];
   const appendedHeaders: Record<string, string[]> = {};
+  const TARGET_FOLDER_ID = '1lQBZKII-qH2lPonIyijNy5RXaaos9OQk';
 
   [CLINICAL_DATABASE_CONFIG, SECURITY_DATABASE_CONFIG, AUDIT_DATABASE_CONFIG].forEach((config) => {
-    const ssId = props.getProperty(config.propertyKey) || (config.propertyKey === 'DB_SECURITY_SPREADSHEET_ID' ? '1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8' : null);
+    let ssId = props.getProperty(config.propertyKey);
+    
+    // Auto-discover from folder if property missing
+    if (!ssId) {
+      try {
+        const folder = DriveApp.getFolderById(TARGET_FOLDER_ID);
+        const files = folder.getFilesByName(config.spreadsheetTitle);
+        if (files.hasNext()) {
+          ssId = files.next().getId();
+          props.setProperty(config.propertyKey, ssId);
+        }
+      } catch (e) {}
+    }
+
     if (!ssId) return;
 
     try {

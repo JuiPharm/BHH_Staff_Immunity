@@ -1377,300 +1377,6 @@ var GASApp = (() => {
     }
   };
 
-  // src/policies/RecordAccessPolicy.ts
-  var RecordAccessPolicy = class {
-    /**
-     * Checks if a user has access to a specific staff member's record (IDOR Protection).
-     */
-    static canAccessRecord(userRole, userStaffId, targetStaffId) {
-      if (userRole === "INFECTION_CONTROL" || userRole === "PHYSICIAN" || userRole === "HR" || userRole === "SUPERUSER" || userRole === "ADMIN") {
-        return true;
-      }
-      if (userRole === "DATA_OWNER" || userRole === "NORMAL_USER") {
-        return userStaffId.toUpperCase() === targetStaffId.toUpperCase();
-      }
-      return false;
-    }
-    /**
-     * Checks if a user can edit/modify a staff member's health record.
-     */
-    static canModifyHealthRecord(userRole) {
-      return userRole === "INFECTION_CONTROL" || userRole === "PHYSICIAN" || userRole === "SUPERUSER" || userRole === "ADMIN";
-    }
-  };
-
-  // src/middleware/AuthorizationMiddleware.ts
-  init_CryptoService();
-  var AuthorizationMiddleware = class {
-    /**
-     * Authorizes an API Request on Backend.
-     * Enforces Action-Level, Record-Level (IDOR Protection), and logs Audit Action on sensitive view.
-     */
-    static authorize(userRole, userStaffId, action, targetStaffId, requestId) {
-      const reqId = requestId || CryptoService.generateUuid();
-      const allowedActions = this.ROLE_PERMISSIONS[userRole] || [];
-      if (!allowedActions.includes(action)) {
-        return {
-          isAuthorized: false,
-          errorResponse: ResponseHelper.error(
-            "FORBIDDEN",
-            `\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E1A\u0E17\u0E1A\u0E32\u0E17 '${userRole}' \u0E44\u0E21\u0E48\u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15\u0E43\u0E2B\u0E49\u0E17\u0E33\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 '${action}'`,
-            reqId,
-            403
-          )
-        };
-      }
-      if (targetStaffId) {
-        const canAccess = RecordAccessPolicy.canAccessRecord(userRole, userStaffId, targetStaffId);
-        if (!canAccess) {
-          return {
-            isAuthorized: false,
-            errorResponse: ResponseHelper.error(
-              "IDOR_FORBIDDEN",
-              `\u0E44\u0E21\u0E48\u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15\u0E43\u0E2B\u0E49\u0E40\u0E02\u0E49\u0E32\u0E16\u0E36\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2A\u0E38\u0E02\u0E20\u0E32\u0E1E\u0E02\u0E2D\u0E07 StaffID '${targetStaffId}'`,
-              reqId,
-              403
-            )
-          };
-        }
-      }
-      if ((userRole === "INFECTION_CONTROL" || userRole === "PHYSICIAN") && action === "READ_HEALTH_RECORDS" && targetStaffId) {
-        this.logSensitiveMedicalView(userRole, userStaffId, targetStaffId);
-      }
-      return { isAuthorized: true };
-    }
-    /**
-     * Audit logging for sensitive medical record view.
-     */
-    static logSensitiveMedicalView(userRole, userStaffId, targetStaffId) {
-      try {
-        const ssId = PropertiesService.getScriptProperties().getProperty("DB_AUDIT_SPREADSHEET_ID");
-        if (!ssId) return;
-        const ss = SpreadsheetApp.openById(ssId);
-        const sheet = ss.getSheetByName("AUDIT_LOG");
-        if (!sheet) return;
-        const now = (/* @__PURE__ */ new Date()).toISOString();
-        const logUuid = `log-${CryptoService.generateUuid()}`;
-        const action = "SENSITIVE_RECORD_VIEW";
-        const target = `Staff:${targetStaffId}/HealthRecord`;
-        const details = JSON.stringify({ viewedBy: userStaffId, role: userRole });
-        const lastRow = sheet.getLastRow();
-        let prevHash = "0000000000000000000000000000000000000000000000000000000000000000";
-        if (lastRow > 1) {
-          prevHash = String(sheet.getRange(lastRow, 9).getValue());
-        }
-        const currentHash = CryptoService.computeAuditEntryHash(logUuid, now, userStaffId, action, target, details, prevHash);
-        sheet.appendRow([
-          logUuid,
-          now,
-          userStaffId,
-          userRole,
-          action,
-          target,
-          details,
-          prevHash,
-          currentHash,
-          now,
-          userStaffId,
-          now,
-          userStaffId,
-          1,
-          false
-        ]);
-      } catch {
-      }
-    }
-  };
-  // Action Permissions Map for 4 Roles
-  AuthorizationMiddleware.ROLE_PERMISSIONS = {
-    INFECTION_CONTROL: [
-      "READ_STAFF_LIST",
-      "READ_STAFF_SELF",
-      "READ_HEALTH_RECORDS",
-      "CREATE_HEALTH_RECORD",
-      "UPDATE_HEALTH_RECORD",
-      "VERIFY_DOCUMENT",
-      "MANAGE_RULE_ENGINE",
-      "EXPORT_HEALTH_DATA",
-      "READ_AUDIT_LOGS"
-    ],
-    HR: [
-      "READ_STAFF_LIST",
-      "READ_STAFF_SELF",
-      "READ_HEALTH_RECORDS",
-      "IMPORT_STAFF_MASTER",
-      "EXPORT_HEALTH_DATA"
-    ],
-    PHYSICIAN: [
-      "READ_STAFF_LIST",
-      "READ_STAFF_SELF",
-      "READ_HEALTH_RECORDS",
-      "CREATE_HEALTH_RECORD",
-      "UPDATE_HEALTH_RECORD",
-      "VERIFY_DOCUMENT",
-      "PHYSICIAN_ASSESSMENT",
-      "MANAGE_RULE_ENGINE",
-      "EXPORT_HEALTH_DATA"
-    ],
-    DATA_OWNER: [
-      "READ_STAFF_SELF",
-      "READ_HEALTH_RECORDS",
-      "CREATE_HEALTH_RECORD",
-      "EXPORT_HEALTH_DATA"
-    ],
-    SUPERUSER: [
-      "READ_STAFF_LIST",
-      "READ_STAFF_SELF",
-      "READ_HEALTH_RECORDS",
-      "CREATE_HEALTH_RECORD",
-      "UPDATE_HEALTH_RECORD",
-      "VERIFY_DOCUMENT",
-      "PHYSICIAN_ASSESSMENT",
-      "MANAGE_RULE_ENGINE",
-      "IMPORT_STAFF_MASTER",
-      "EXPORT_HEALTH_DATA",
-      "READ_AUDIT_LOGS",
-      "MANAGE_SUPERUSER_STATUS"
-    ],
-    ADMIN: [
-      "READ_STAFF_LIST",
-      "READ_STAFF_SELF",
-      "READ_HEALTH_RECORDS",
-      "CREATE_HEALTH_RECORD",
-      "UPDATE_HEALTH_RECORD",
-      "VERIFY_DOCUMENT",
-      "PHYSICIAN_ASSESSMENT",
-      "MANAGE_RULE_ENGINE",
-      "IMPORT_STAFF_MASTER",
-      "EXPORT_HEALTH_DATA",
-      "READ_AUDIT_LOGS",
-      "MANAGE_SUPERUSER_STATUS"
-    ],
-    NORMAL_USER: [
-      "READ_STAFF_SELF",
-      "READ_HEALTH_RECORDS",
-      "CREATE_HEALTH_RECORD",
-      "EXPORT_HEALTH_DATA"
-    ]
-  };
-
-  // src/controllers/StaffController.ts
-  var StaffController = class {
-    constructor(staffService) {
-      this.staffService = staffService || new StaffService();
-    }
-    /**
-     * Get single staff record by StaffID.
-     * Enforces IDOR Check for Data Owner.
-     */
-    getStaff(userRole, userStaffId, targetStaffId, requestId) {
-      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_STAFF_SELF", targetStaffId, requestId);
-      if (!auth.isAuthorized) {
-        return auth.errorResponse;
-      }
-      const staff = this.staffService.getStaffByStaffId(targetStaffId);
-      if (!staff) {
-        return ResponseHelper.error("NOT_FOUND", `\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23\u0E23\u0E2B\u0E31\u0E2A '${targetStaffId}'`, requestId, 404);
-      }
-      return ResponseHelper.success(staff, requestId);
-    }
-    /**
-     * Search and List staff records formatted for Frontend StaffMaster contract.
-     */
-    getStaffList(userRole, userStaffId, payload, requestId) {
-      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_STAFF_LIST", void 0, requestId);
-      if (!auth.isAuthorized) {
-        return auth.errorResponse;
-      }
-      const allStaff = this.staffService.searchStaff({
-        keyword: payload == null ? void 0 : payload.keyword,
-        departmentCode: payload == null ? void 0 : payload.departmentCode,
-        workGroup: payload == null ? void 0 : payload.workGroup,
-        employmentStatus: payload == null ? void 0 : payload.employmentStatus,
-        page: 1,
-        limit: 1e3
-      });
-      const items = (allStaff.items || []).map((s) => ({
-        staffId: s.StaffID,
-        hn: s.HN || "",
-        firstName: s.FirstName || "",
-        lastName: s.LastName || "",
-        department: s.DepartmentCode || "",
-        workGroup: s.WorkGroup || "BACKOFFICE",
-        email: s.Email || "",
-        phone: s.Phone || "",
-        workReadiness: "CLEARED"
-      }));
-      return ResponseHelper.success(items, requestId);
-    }
-    /**
-     * Search and List staff records.
-     */
-    listStaff(userRole, userStaffId, payload, requestId) {
-      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_STAFF_LIST", void 0, requestId);
-      if (!auth.isAuthorized) {
-        return auth.errorResponse;
-      }
-      const result = this.staffService.searchStaff({
-        keyword: payload.keyword,
-        departmentCode: payload.departmentCode,
-        workGroup: payload.workGroup,
-        employmentStatus: payload.employmentStatus,
-        page: Number(payload.page) || 1,
-        limit: Number(payload.limit) || 10
-      });
-      return ResponseHelper.success(result, requestId);
-    }
-    /**
-     * Create new staff record (HR only).
-     */
-    createStaff(userRole, userStaffId, payload, requestId) {
-      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "IMPORT_STAFF_MASTER", void 0, requestId);
-      if (!auth.isAuthorized) {
-        return auth.errorResponse;
-      }
-      try {
-        const created = this.staffService.createStaff(payload, userStaffId);
-        return ResponseHelper.success(created, requestId);
-      } catch (err) {
-        return ResponseHelper.error("CREATE_FAILED", err.message, requestId, 400);
-      }
-    }
-    /**
-     * Update staff record (HR / Elevated roles).
-     */
-    updateStaff(userRole, userStaffId, targetStaffId, payload, requestId) {
-      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "IMPORT_STAFF_MASTER", targetStaffId, requestId);
-      if (!auth.isAuthorized) {
-        return auth.errorResponse;
-      }
-      try {
-        const updated = this.staffService.updateStaff(targetStaffId, payload, userStaffId);
-        return ResponseHelper.success(updated, requestId);
-      } catch (err) {
-        return ResponseHelper.error("UPDATE_FAILED", err.message, requestId, 400);
-      }
-    }
-    /**
-     * Soft delete staff record (HR / Admin).
-     */
-    deleteStaff(userRole, userStaffId, targetStaffId, requestId) {
-      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "IMPORT_STAFF_MASTER", targetStaffId, requestId);
-      if (!auth.isAuthorized) {
-        return auth.errorResponse;
-      }
-      try {
-        const success = this.staffService.deleteStaff(targetStaffId, userStaffId);
-        if (!success) {
-          return ResponseHelper.error("NOT_FOUND", `\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23 '${targetStaffId}' \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E17\u0E33\u0E01\u0E32\u0E23 Soft Delete`, requestId, 404);
-        }
-        return ResponseHelper.success({ message: `\u0E17\u0E33\u0E01\u0E32\u0E23 Soft Delete \u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23 '${targetStaffId}' \u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22\u0E41\u0E25\u0E49\u0E27` }, requestId);
-      } catch (err) {
-        return ResponseHelper.error("DELETE_FAILED", err.message, requestId, 400);
-      }
-    }
-  };
-
   // src/repositories/ClinicalRepository.ts
   init_SheetRepository();
   init_CryptoService();
@@ -1832,6 +1538,311 @@ var GASApp = (() => {
         this.sheetRepo.appendRow("LAB_RESULT", headers, rowObj);
         return rowObj;
       });
+    }
+  };
+
+  // src/policies/RecordAccessPolicy.ts
+  var RecordAccessPolicy = class {
+    /**
+     * Checks if a user has access to a specific staff member's record (IDOR Protection).
+     */
+    static canAccessRecord(userRole, userStaffId, targetStaffId) {
+      if (userRole === "INFECTION_CONTROL" || userRole === "PHYSICIAN" || userRole === "HR" || userRole === "SUPERUSER" || userRole === "ADMIN") {
+        return true;
+      }
+      if (userRole === "DATA_OWNER" || userRole === "NORMAL_USER") {
+        return userStaffId.toUpperCase() === targetStaffId.toUpperCase();
+      }
+      return false;
+    }
+    /**
+     * Checks if a user can edit/modify a staff member's health record.
+     */
+    static canModifyHealthRecord(userRole) {
+      return userRole === "INFECTION_CONTROL" || userRole === "PHYSICIAN" || userRole === "SUPERUSER" || userRole === "ADMIN";
+    }
+  };
+
+  // src/middleware/AuthorizationMiddleware.ts
+  init_CryptoService();
+  var AuthorizationMiddleware = class {
+    /**
+     * Authorizes an API Request on Backend.
+     * Enforces Action-Level, Record-Level (IDOR Protection), and logs Audit Action on sensitive view.
+     */
+    static authorize(userRole, userStaffId, action, targetStaffId, requestId) {
+      const reqId = requestId || CryptoService.generateUuid();
+      const allowedActions = this.ROLE_PERMISSIONS[userRole] || [];
+      if (!allowedActions.includes(action)) {
+        return {
+          isAuthorized: false,
+          errorResponse: ResponseHelper.error(
+            "FORBIDDEN",
+            `\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E1A\u0E17\u0E1A\u0E32\u0E17 '${userRole}' \u0E44\u0E21\u0E48\u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15\u0E43\u0E2B\u0E49\u0E17\u0E33\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 '${action}'`,
+            reqId,
+            403
+          )
+        };
+      }
+      if (targetStaffId) {
+        const canAccess = RecordAccessPolicy.canAccessRecord(userRole, userStaffId, targetStaffId);
+        if (!canAccess) {
+          return {
+            isAuthorized: false,
+            errorResponse: ResponseHelper.error(
+              "IDOR_FORBIDDEN",
+              `\u0E44\u0E21\u0E48\u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15\u0E43\u0E2B\u0E49\u0E40\u0E02\u0E49\u0E32\u0E16\u0E36\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2A\u0E38\u0E02\u0E20\u0E32\u0E1E\u0E02\u0E2D\u0E07 StaffID '${targetStaffId}'`,
+              reqId,
+              403
+            )
+          };
+        }
+      }
+      if ((userRole === "INFECTION_CONTROL" || userRole === "PHYSICIAN") && action === "READ_HEALTH_RECORDS" && targetStaffId) {
+        this.logSensitiveMedicalView(userRole, userStaffId, targetStaffId);
+      }
+      return { isAuthorized: true };
+    }
+    /**
+     * Audit logging for sensitive medical record view.
+     */
+    static logSensitiveMedicalView(userRole, userStaffId, targetStaffId) {
+      try {
+        const ssId = PropertiesService.getScriptProperties().getProperty("DB_AUDIT_SPREADSHEET_ID");
+        if (!ssId) return;
+        const ss = SpreadsheetApp.openById(ssId);
+        const sheet = ss.getSheetByName("AUDIT_LOG");
+        if (!sheet) return;
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const logUuid = `log-${CryptoService.generateUuid()}`;
+        const action = "SENSITIVE_RECORD_VIEW";
+        const target = `Staff:${targetStaffId}/HealthRecord`;
+        const details = JSON.stringify({ viewedBy: userStaffId, role: userRole });
+        const lastRow = sheet.getLastRow();
+        let prevHash = "0000000000000000000000000000000000000000000000000000000000000000";
+        if (lastRow > 1) {
+          prevHash = String(sheet.getRange(lastRow, 9).getValue());
+        }
+        const currentHash = CryptoService.computeAuditEntryHash(logUuid, now, userStaffId, action, target, details, prevHash);
+        sheet.appendRow([
+          logUuid,
+          now,
+          userStaffId,
+          userRole,
+          action,
+          target,
+          details,
+          prevHash,
+          currentHash,
+          now,
+          userStaffId,
+          now,
+          userStaffId,
+          1,
+          false
+        ]);
+      } catch {
+      }
+    }
+  };
+  // Action Permissions Map for Roles
+  AuthorizationMiddleware.ROLE_PERMISSIONS = {
+    INFECTION_CONTROL: [
+      "READ_STAFF_LIST",
+      "READ_STAFF_SELF",
+      "READ_HEALTH_RECORDS",
+      "CREATE_HEALTH_RECORD",
+      "UPDATE_HEALTH_RECORD",
+      "VERIFY_DOCUMENT",
+      "MANAGE_RULE_ENGINE",
+      "EXPORT_HEALTH_DATA",
+      "READ_AUDIT_LOGS"
+    ],
+    HR: [
+      "READ_STAFF_LIST",
+      "READ_STAFF_SELF",
+      "READ_HEALTH_RECORDS",
+      "IMPORT_STAFF_MASTER",
+      "EXPORT_HEALTH_DATA"
+    ],
+    PHYSICIAN: [
+      "READ_STAFF_LIST",
+      "READ_STAFF_SELF",
+      "READ_HEALTH_RECORDS",
+      "CREATE_HEALTH_RECORD",
+      "UPDATE_HEALTH_RECORD",
+      "VERIFY_DOCUMENT",
+      "PHYSICIAN_ASSESSMENT",
+      "MANAGE_RULE_ENGINE",
+      "EXPORT_HEALTH_DATA"
+    ],
+    DATA_OWNER: [
+      "READ_STAFF_LIST",
+      "READ_STAFF_SELF",
+      "READ_HEALTH_RECORDS",
+      "CREATE_HEALTH_RECORD",
+      "EXPORT_HEALTH_DATA"
+    ],
+    SUPERUSER: [
+      "READ_STAFF_LIST",
+      "READ_STAFF_SELF",
+      "READ_HEALTH_RECORDS",
+      "CREATE_HEALTH_RECORD",
+      "UPDATE_HEALTH_RECORD",
+      "VERIFY_DOCUMENT",
+      "PHYSICIAN_ASSESSMENT",
+      "MANAGE_RULE_ENGINE",
+      "IMPORT_STAFF_MASTER",
+      "EXPORT_HEALTH_DATA",
+      "READ_AUDIT_LOGS",
+      "MANAGE_SUPERUSER_STATUS"
+    ],
+    ADMIN: [
+      "READ_STAFF_LIST",
+      "READ_STAFF_SELF",
+      "READ_HEALTH_RECORDS",
+      "CREATE_HEALTH_RECORD",
+      "UPDATE_HEALTH_RECORD",
+      "VERIFY_DOCUMENT",
+      "PHYSICIAN_ASSESSMENT",
+      "MANAGE_RULE_ENGINE",
+      "IMPORT_STAFF_MASTER",
+      "EXPORT_HEALTH_DATA",
+      "READ_AUDIT_LOGS",
+      "MANAGE_SUPERUSER_STATUS"
+    ],
+    NORMAL_USER: [
+      "READ_STAFF_LIST",
+      "READ_STAFF_SELF",
+      "READ_HEALTH_RECORDS",
+      "CREATE_HEALTH_RECORD",
+      "EXPORT_HEALTH_DATA"
+    ]
+  };
+
+  // src/controllers/StaffController.ts
+  var StaffController = class {
+    constructor(staffService, clinicalRepo) {
+      this.staffService = staffService || new StaffService();
+      this.clinicalRepo = clinicalRepo || new ClinicalRepository();
+    }
+    /**
+     * Get single staff record by StaffID.
+     * Enforces IDOR Check for Data Owner.
+     */
+    getStaff(userRole, userStaffId, targetStaffId, requestId) {
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_STAFF_SELF", targetStaffId, requestId);
+      if (!auth.isAuthorized) {
+        return auth.errorResponse;
+      }
+      const staff = this.staffService.getStaffByStaffId(targetStaffId);
+      if (!staff) {
+        return ResponseHelper.error("NOT_FOUND", `\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23\u0E23\u0E2B\u0E31\u0E2A '${targetStaffId}'`, requestId, 404);
+      }
+      return ResponseHelper.success(staff, requestId);
+    }
+    /**
+     * Search and List staff records formatted for Frontend StaffMaster contract.
+     */
+    getStaffList(userRole, userStaffId, payload, requestId) {
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_STAFF_LIST", void 0, requestId);
+      if (!auth.isAuthorized) {
+        return auth.errorResponse;
+      }
+      const allStaff = this.staffService.searchStaff({
+        keyword: payload == null ? void 0 : payload.keyword,
+        departmentCode: payload == null ? void 0 : payload.departmentCode,
+        workGroup: payload == null ? void 0 : payload.workGroup,
+        employmentStatus: payload == null ? void 0 : payload.employmentStatus,
+        page: 1,
+        limit: 1e3
+      });
+      const items = (allStaff.items || []).map((s) => {
+        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+        const isVerified = vacs.some((v) => String(v.VerificationStatus).toUpperCase() === "VERIFIED" || String(v.VerificationStatus).toUpperCase() === "APPROVED");
+        const isPending = vacs.some((v) => String(v.VerificationStatus).toUpperCase() === "PENDING" || String(v.VerificationStatus).toUpperCase() === "PENDING_VERIFICATION");
+        let readiness = "NOT_CLEARED";
+        if (isVerified) readiness = "CLEARED";
+        else if (isPending) readiness = "CONDITIONALLY_CLEARED";
+        return {
+          staffId: s.StaffID,
+          hn: s.HN || "",
+          firstName: s.FirstName || "",
+          lastName: s.LastName || "",
+          department: s.DepartmentCode || "",
+          workGroup: s.WorkGroup || "BACKOFFICE",
+          email: s.Email || "",
+          phone: s.Phone || s.EmergencyPhone || "",
+          workReadiness: readiness
+        };
+      });
+      return ResponseHelper.success(items, requestId);
+    }
+    /**
+     * Search and List staff records with pagination metadata.
+     */
+    listStaff(userRole, userStaffId, payload, requestId) {
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_STAFF_LIST", void 0, requestId);
+      if (!auth.isAuthorized) {
+        return auth.errorResponse;
+      }
+      const result = this.staffService.searchStaff({
+        keyword: payload == null ? void 0 : payload.keyword,
+        departmentCode: payload == null ? void 0 : payload.departmentCode,
+        workGroup: payload == null ? void 0 : payload.workGroup,
+        employmentStatus: payload == null ? void 0 : payload.employmentStatus,
+        page: Number(payload == null ? void 0 : payload.page) || 1,
+        limit: Number(payload == null ? void 0 : payload.limit) || 10
+      });
+      return ResponseHelper.success(result, requestId);
+    }
+    /**
+     * Create new staff record (HR only).
+     */
+    createStaff(userRole, userStaffId, payload, requestId) {
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "IMPORT_STAFF_MASTER", void 0, requestId);
+      if (!auth.isAuthorized) {
+        return auth.errorResponse;
+      }
+      try {
+        const created = this.staffService.createStaff(payload, userStaffId);
+        return ResponseHelper.success(created, requestId);
+      } catch (err) {
+        return ResponseHelper.error("CREATE_FAILED", err.message, requestId, 400);
+      }
+    }
+    /**
+     * Update staff record (HR / Elevated roles).
+     */
+    updateStaff(userRole, userStaffId, targetStaffId, payload, requestId) {
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "IMPORT_STAFF_MASTER", targetStaffId, requestId);
+      if (!auth.isAuthorized) {
+        return auth.errorResponse;
+      }
+      try {
+        const updated = this.staffService.updateStaff(targetStaffId, payload, userStaffId);
+        return ResponseHelper.success(updated, requestId);
+      } catch (err) {
+        return ResponseHelper.error("UPDATE_FAILED", err.message, requestId, 400);
+      }
+    }
+    /**
+     * Soft delete staff record (HR / Admin).
+     */
+    deleteStaff(userRole, userStaffId, targetStaffId, requestId) {
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "IMPORT_STAFF_MASTER", targetStaffId, requestId);
+      if (!auth.isAuthorized) {
+        return auth.errorResponse;
+      }
+      try {
+        const success = this.staffService.deleteStaff(targetStaffId, userStaffId);
+        if (!success) {
+          return ResponseHelper.error("NOT_FOUND", `\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23 '${targetStaffId}' \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E17\u0E33\u0E01\u0E32\u0E23 Soft Delete`, requestId, 404);
+        }
+        return ResponseHelper.success({ message: `\u0E17\u0E33\u0E01\u0E32\u0E23 Soft Delete \u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23 '${targetStaffId}' \u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22\u0E41\u0E25\u0E49\u0E27` }, requestId);
+      } catch (err) {
+        return ResponseHelper.error("DELETE_FAILED", err.message, requestId, 400);
+      }
     }
   };
 
@@ -2553,7 +2564,28 @@ var GASApp = (() => {
       this.clinicalRepo = clinicalRepo || new ClinicalRepository();
     }
     /**
-     * Completeness Dashboard Aggregation with 2-tier Caching (RAM CacheService -> DB DASHBOARD_CACHE).
+     * Helper: Check if status represents pending verification.
+     */
+    isPending(status) {
+      const s = String(status || "").toUpperCase();
+      return s === "PENDING" || s === "PENDING_VERIFICATION";
+    }
+    /**
+     * Helper: Check if status represents verified.
+     */
+    isVerified(status) {
+      const s = String(status || "").toUpperCase();
+      return s === "VERIFIED" || s === "APPROVED";
+    }
+    /**
+     * Helper: Check if status represents rejected.
+     */
+    isRejected(status) {
+      const s = String(status || "").toUpperCase();
+      return s === "REJECTED";
+    }
+    /**
+     * Completeness Dashboard Aggregation with 2-tier Caching.
      */
     getCompletenessDashboard(userRole, forceRefresh = false) {
       const cacheKey = "DASHBOARD_COMPLETENESS_SUMMARY";
@@ -2586,9 +2618,13 @@ var GASApp = (() => {
         workGroupBreakdown[wg].total++;
         departmentBreakdown[dept].total++;
         const vacs = this.clinicalRepo.findVaccinationsByStaffId(staff.StaffID);
-        const pendingVacs = vacs.filter((v) => String(v.VerificationStatus).toUpperCase() === "PENDING_VERIFICATION");
-        pendingVerificationQueue += pendingVacs.length;
-        const isComplete = vacs.filter((v) => String(v.VerificationStatus).toUpperCase() === "VERIFIED").length >= 1;
+        const labs = this.clinicalRepo.findLabResultsByStaffId(staff.StaffID);
+        const cxrs = this.clinicalRepo.findChestXraysByStaffId(staff.StaffID);
+        const tbs = this.clinicalRepo.findTbAssessmentsByStaffId(staff.StaffID);
+        const pendingCount = vacs.filter((v) => this.isPending(v.VerificationStatus)).length + labs.filter((l) => this.isPending(l.VerificationStatus)).length + cxrs.filter((c) => this.isPending(c.VerificationStatus)).length + tbs.filter((t) => this.isPending(t.VerificationStatus)).length;
+        pendingVerificationQueue += pendingCount;
+        const verifiedCount = vacs.filter((v) => this.isVerified(v.VerificationStatus)).length + labs.filter((l) => this.isVerified(l.VerificationStatus)).length + cxrs.filter((c) => this.isVerified(c.VerificationStatus)).length;
+        const isComplete = verifiedCount >= 1;
         if (isComplete) {
           completeCount++;
           workGroupBreakdown[wg].complete++;
@@ -2619,7 +2655,7 @@ var GASApp = (() => {
       return this.applyRoleMasking(dataObj, userRole);
     }
     /**
-     * Follow-up Dashboard Aggregation.
+     * Follow-up Dashboard Aggregation with Dynamic Real Date Differences.
      */
     getFollowUpDashboard(userRole, forceRefresh = false) {
       const cacheKey = "DASHBOARD_FOLLOWUP_SUMMARY";
@@ -2630,6 +2666,8 @@ var GASApp = (() => {
         }
       }
       const staffList = this.staffRepo.findAll(false);
+      const nowMs = Date.now();
+      const msPerDay = 24 * 60 * 60 * 1e3;
       let vaccineRequired = 0;
       let labRequired = 0;
       let cxrRequired = 0;
@@ -2641,18 +2679,54 @@ var GASApp = (() => {
       let rejectedEvidenceCount = 0;
       staffList.forEach((staff) => {
         const vacs = this.clinicalRepo.findVaccinationsByStaffId(staff.StaffID);
-        const verified = vacs.filter((v) => String(v.VerificationStatus).toUpperCase() === "VERIFIED");
-        const rejected = vacs.filter((v) => String(v.VerificationStatus).toUpperCase() === "REJECTED");
-        rejectedEvidenceCount += rejected.length;
-        if (verified.length === 0) {
+        const labs = this.clinicalRepo.findLabResultsByStaffId(staff.StaffID);
+        const cxrs = this.clinicalRepo.findChestXraysByStaffId(staff.StaffID);
+        const medAss = this.clinicalRepo.findMedicalAssessmentsByStaffId(staff.StaffID);
+        const verifiedVacs = vacs.filter((v) => this.isVerified(v.VerificationStatus));
+        const rejectedVacs = vacs.filter((v) => this.isRejected(v.VerificationStatus));
+        const rejectedLabs = labs.filter((l) => this.isRejected(l.VerificationStatus));
+        const rejectedCxrs = cxrs.filter((c) => this.isRejected(c.VerificationStatus));
+        rejectedEvidenceCount += rejectedVacs.length + rejectedLabs.length + rejectedCxrs.length;
+        if (verifiedVacs.length === 0) {
           vaccineRequired++;
-          overdueCount++;
-        } else {
-          dueWithin30Days++;
         }
         if (staff.WorkGroup === "CLINICAL") {
-          labRequired++;
-          cxrRequired++;
+          if (labs.filter((l) => this.isVerified(l.VerificationStatus)).length === 0) labRequired++;
+          if (cxrs.filter((c) => this.isVerified(c.VerificationStatus)).length === 0) cxrRequired++;
+        }
+        if (medAss.length === 0) {
+          physicianReviewRequired++;
+        }
+        let earliestDueDate = null;
+        [...vacs, ...cxrs].forEach((rec) => {
+          if (rec.ExpiryDate) {
+            const expMs = new Date(rec.ExpiryDate).getTime();
+            if (!isNaN(expMs)) {
+              if (earliestDueDate === null || expMs < earliestDueDate) earliestDueDate = expMs;
+            }
+          }
+        });
+        medAss.forEach((ma) => {
+          if (ma.NextReviewDate) {
+            const revMs = new Date(ma.NextReviewDate).getTime();
+            if (!isNaN(revMs)) {
+              if (earliestDueDate === null || revMs < earliestDueDate) earliestDueDate = revMs;
+            }
+          }
+        });
+        if (earliestDueDate === null && verifiedVacs.length === 0) {
+          overdueCount++;
+        } else if (earliestDueDate !== null) {
+          const daysDiff = Math.ceil((earliestDueDate - nowMs) / msPerDay);
+          if (daysDiff < 0) {
+            overdueCount++;
+          } else if (daysDiff <= 7) {
+            dueWithin7Days++;
+          } else if (daysDiff <= 30) {
+            dueWithin30Days++;
+          } else if (daysDiff <= 60) {
+            dueWithin60Days++;
+          }
         }
       });
       const dataObj = {
@@ -2673,9 +2747,10 @@ var GASApp = (() => {
       return this.applyRoleMasking(dataObj, userRole);
     }
     /**
-     * Progress Dashboard Aggregation.
+     * Progress Dashboard Aggregation with Real Monthly Historical Breakdown.
      */
     getProgressDashboard(userRole, forceRefresh = false) {
+      var _a;
       const cacheKey = "DASHBOARD_PROGRESS_SUMMARY";
       if (!forceRefresh) {
         const ramCache = CacheService.getScriptCache().get(cacheKey);
@@ -2684,25 +2759,59 @@ var GASApp = (() => {
         }
       }
       const staffList = this.staffRepo.findAll(false);
-      const total = staffList.length || 1;
-      let complete = 0;
-      staffList.forEach((s) => {
-        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
-        if (vacs.some((v) => String(v.VerificationStatus).toUpperCase() === "VERIFIED")) complete++;
+      const totalStaff = staffList.length || 1;
+      const now = /* @__PURE__ */ new Date();
+      const months = [];
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const thaiMonths = ["\u0E21.\u0E04.", "\u0E01.\u0E1E.", "\u0E21\u0E35.\u0E04.", "\u0E40\u0E21.\u0E22.", "\u0E1E.\u0E04.", "\u0E21\u0E34.\u0E22.", "\u0E01.\u0E04.", "\u0E2A.\u0E04.", "\u0E01.\u0E22.", "\u0E15.\u0E04.", "\u0E1E.\u0E22.", "\u0E18.\u0E04."];
+        months.push({
+          label: thaiMonths[d.getMonth()],
+          year: d.getFullYear(),
+          month: d.getMonth()
+        });
+      }
+      let completedThisMonth = 0;
+      let newThisMonth = 0;
+      const completionTrend = months.map((m) => {
+        const endOfMonthMs = new Date(m.year, m.month + 1, 0, 23, 59, 59).getTime();
+        let completedCountAtMonth = 0;
+        staffList.forEach((s) => {
+          const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+          const verifiedBeforeMonth = vacs.filter((v) => {
+            if (!this.isVerified(v.VerificationStatus)) return false;
+            const vDate = new Date(v.AdministeredDate || v.CreatedAt).getTime();
+            return vDate <= endOfMonthMs;
+          });
+          if (verifiedBeforeMonth.length >= 1) {
+            completedCountAtMonth++;
+          }
+        });
+        const rate = Math.round(completedCountAtMonth / totalStaff * 100);
+        return { month: m.label, rate };
       });
-      const currentRate = Math.round(complete / total * 100);
+      const startOfCurrentMonthMs = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+      staffList.forEach((s) => {
+        const createdMs = new Date(s.CreatedAt || s.StartDate).getTime();
+        if (createdMs >= startOfCurrentMonthMs) newThisMonth++;
+        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+        const verifiedThisMonth = vacs.filter((v) => {
+          if (!this.isVerified(v.VerificationStatus)) return false;
+          const vDate = new Date(v.AdministeredDate || v.CreatedAt).getTime();
+          return vDate >= startOfCurrentMonthMs;
+        });
+        if (verifiedThisMonth.length >= 1) completedThisMonth++;
+      });
+      const currentRate = ((_a = completionTrend[completionTrend.length - 1]) == null ? void 0 : _a.rate) || 0;
+      const pendingCount = staffList.filter((s) => {
+        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+        return vacs.filter((v) => this.isVerified(v.VerificationStatus)).length === 0;
+      }).length;
       const dataObj = {
-        completionTrend: [
-          { month: "\u0E21.\u0E04.", rate: Math.max(0, currentRate - 25) },
-          { month: "\u0E01.\u0E1E.", rate: Math.max(0, currentRate - 20) },
-          { month: "\u0E21\u0E35.\u0E04.", rate: Math.max(0, currentRate - 15) },
-          { month: "\u0E40\u0E21.\u0E22.", rate: Math.max(0, currentRate - 10) },
-          { month: "\u0E1E.\u0E04.", rate: Math.max(0, currentRate - 5) },
-          { month: "\u0E21\u0E34.\u0E22.", rate: currentRate }
-        ],
-        completedActionsThisMonth: complete,
-        newActionsThisMonth: Math.max(0, total - complete),
-        overdueTrendCount: Math.max(0, total - complete),
+        completionTrend,
+        completedActionsThisMonth: completedThisMonth,
+        newActionsThisMonth: newThisMonth,
+        overdueTrendCount: pendingCount,
         calculatedAt: (/* @__PURE__ */ new Date()).toISOString()
       };
       this.cacheRepo.saveCache(cacheKey, dataObj, 30);
@@ -2728,34 +2837,117 @@ var GASApp = (() => {
     getDrillDownDetail(category, userRole) {
       const staffList = this.staffRepo.findAll(false);
       const catUpper = String(category || "TOTAL").toUpperCase();
-      let filteredStaff = staffList;
-      if (catUpper === "COMPLETE") {
+      const nowMs = Date.now();
+      const msPerDay = 24 * 60 * 60 * 1e3;
+      let filteredStaff = [];
+      if (catUpper === "TOTAL") {
+        filteredStaff = staffList;
+      } else if (catUpper === "COMPLETE") {
         filteredStaff = staffList.filter((s) => {
           const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
-          return vacs.length >= 2;
+          return vacs.some((v) => this.isVerified(v.VerificationStatus));
         });
       } else if (catUpper === "INCOMPLETE") {
         filteredStaff = staffList.filter((s) => {
           const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
-          return vacs.length < 2;
+          return !vacs.some((v) => this.isVerified(v.VerificationStatus));
         });
       } else if (catUpper === "PENDING_VERIFICATION") {
         filteredStaff = staffList.filter((s) => {
           const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
-          return vacs.some((v) => String(v.VerificationStatus).toUpperCase() === "PENDING");
+          const labs = this.clinicalRepo.findLabResultsByStaffId(s.StaffID);
+          const cxrs = this.clinicalRepo.findChestXraysByStaffId(s.StaffID);
+          const tbs = this.clinicalRepo.findTbAssessmentsByStaffId(s.StaffID);
+          return vacs.some((v) => this.isPending(v.VerificationStatus)) || labs.some((l) => this.isPending(l.VerificationStatus)) || cxrs.some((c) => this.isPending(c.VerificationStatus)) || tbs.some((t) => this.isPending(t.VerificationStatus));
         });
-      } else if (["OVERDUE", "DUE_7_DAYS", "DUE_30_DAYS", "DUE_60_DAYS", "REJECTED_EVIDENCE", "EMAIL_FAILED"].includes(catUpper)) {
+      } else if (catUpper === "VACCINE_REQUIRED") {
         filteredStaff = staffList.filter((s) => {
           const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
-          return vacs.length < 2;
+          return !vacs.some((v) => this.isVerified(v.VerificationStatus));
+        });
+      } else if (catUpper === "LAB_REQUIRED") {
+        filteredStaff = staffList.filter((s) => {
+          if (s.WorkGroup !== "CLINICAL") return false;
+          const labs = this.clinicalRepo.findLabResultsByStaffId(s.StaffID);
+          return !labs.some((l) => this.isVerified(l.VerificationStatus));
+        });
+      } else if (catUpper === "CXR_REQUIRED") {
+        filteredStaff = staffList.filter((s) => {
+          if (s.WorkGroup !== "CLINICAL") return false;
+          const cxrs = this.clinicalRepo.findChestXraysByStaffId(s.StaffID);
+          return !cxrs.some((c) => this.isVerified(c.VerificationStatus));
+        });
+      } else if (catUpper === "PHYSICIAN_REVIEW_REQUIRED") {
+        filteredStaff = staffList.filter((s) => {
+          const medAss = this.clinicalRepo.findMedicalAssessmentsByStaffId(s.StaffID);
+          return medAss.length === 0;
+        });
+      } else if (catUpper === "OVERDUE") {
+        filteredStaff = staffList.filter((s) => {
+          const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+          const verifiedVacs = vacs.filter((v) => this.isVerified(v.VerificationStatus));
+          if (verifiedVacs.length === 0) return true;
+          let hasExpired = false;
+          vacs.forEach((v) => {
+            if (v.ExpiryDate && new Date(v.ExpiryDate).getTime() < nowMs) hasExpired = true;
+          });
+          return hasExpired;
+        });
+      } else if (catUpper === "DUE_7_DAYS") {
+        filteredStaff = staffList.filter((s) => {
+          const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+          const cxrs = this.clinicalRepo.findChestXraysByStaffId(s.StaffID);
+          let match = false;
+          [...vacs, ...cxrs].forEach((rec) => {
+            if (rec.ExpiryDate) {
+              const daysDiff = Math.ceil((new Date(rec.ExpiryDate).getTime() - nowMs) / msPerDay);
+              if (daysDiff >= 0 && daysDiff <= 7) match = true;
+            }
+          });
+          return match;
+        });
+      } else if (catUpper === "DUE_30_DAYS") {
+        filteredStaff = staffList.filter((s) => {
+          const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+          const cxrs = this.clinicalRepo.findChestXraysByStaffId(s.StaffID);
+          let match = false;
+          [...vacs, ...cxrs].forEach((rec) => {
+            if (rec.ExpiryDate) {
+              const daysDiff = Math.ceil((new Date(rec.ExpiryDate).getTime() - nowMs) / msPerDay);
+              if (daysDiff > 7 && daysDiff <= 30) match = true;
+            }
+          });
+          return match;
+        });
+      } else if (catUpper === "DUE_60_DAYS") {
+        filteredStaff = staffList.filter((s) => {
+          const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+          const cxrs = this.clinicalRepo.findChestXraysByStaffId(s.StaffID);
+          let match = false;
+          [...vacs, ...cxrs].forEach((rec) => {
+            if (rec.ExpiryDate) {
+              const daysDiff = Math.ceil((new Date(rec.ExpiryDate).getTime() - nowMs) / msPerDay);
+              if (daysDiff > 30 && daysDiff <= 60) match = true;
+            }
+          });
+          return match;
+        });
+      } else if (catUpper === "REJECTED_EVIDENCE") {
+        filteredStaff = staffList.filter((s) => {
+          const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+          const labs = this.clinicalRepo.findLabResultsByStaffId(s.StaffID);
+          const cxrs = this.clinicalRepo.findChestXraysByStaffId(s.StaffID);
+          return vacs.some((v) => this.isRejected(v.VerificationStatus)) || labs.some((l) => this.isRejected(l.VerificationStatus)) || cxrs.some((c) => this.isRejected(c.VerificationStatus));
         });
       } else if (["CLINICAL", "FRONTLINE", "BACKOFFICE"].includes(catUpper)) {
         filteredStaff = staffList.filter((s) => String(s.WorkGroup).toUpperCase() === catUpper);
+      } else {
+        filteredStaff = staffList;
       }
       const items = filteredStaff.map((s) => {
         const name = `${s.TitleTH || ""} ${s.FirstName || ""} ${s.LastName || ""}`.trim() || s.StaffID;
         const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
-        const isComplete = vacs.length >= 2;
+        const isComplete = vacs.some((v) => this.isVerified(v.VerificationStatus));
         return {
           staffId: s.StaffID,
           name,

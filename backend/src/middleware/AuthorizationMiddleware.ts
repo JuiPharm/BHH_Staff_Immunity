@@ -4,7 +4,7 @@ import { ResponseHelper } from '../utils/ResponseHelper';
 import { CryptoService } from '../services/CryptoService';
 
 export class AuthorizationMiddleware {
-  // Action Permissions Map for 4 Roles
+  // Action Permissions Map for Roles
   private static ROLE_PERMISSIONS: Record<UserRole, string[]> = {
     INFECTION_CONTROL: [
       'READ_STAFF_LIST', 'READ_STAFF_SELF', 'READ_HEALTH_RECORDS', 'CREATE_HEALTH_RECORD',
@@ -21,7 +21,7 @@ export class AuthorizationMiddleware {
       'EXPORT_HEALTH_DATA'
     ],
     DATA_OWNER: [
-      'READ_STAFF_SELF', 'READ_HEALTH_RECORDS', 'CREATE_HEALTH_RECORD', 'EXPORT_HEALTH_DATA'
+      'READ_STAFF_LIST', 'READ_STAFF_SELF', 'READ_HEALTH_RECORDS', 'CREATE_HEALTH_RECORD', 'EXPORT_HEALTH_DATA'
     ],
     SUPERUSER: [
       'READ_STAFF_LIST', 'READ_STAFF_SELF', 'READ_HEALTH_RECORDS', 'CREATE_HEALTH_RECORD',
@@ -34,7 +34,7 @@ export class AuthorizationMiddleware {
       'IMPORT_STAFF_MASTER', 'EXPORT_HEALTH_DATA', 'READ_AUDIT_LOGS', 'MANAGE_SUPERUSER_STATUS'
     ],
     NORMAL_USER: [
-      'READ_STAFF_SELF', 'READ_HEALTH_RECORDS', 'CREATE_HEALTH_RECORD', 'EXPORT_HEALTH_DATA'
+      'READ_STAFF_LIST', 'READ_STAFF_SELF', 'READ_HEALTH_RECORDS', 'CREATE_HEALTH_RECORD', 'EXPORT_HEALTH_DATA'
     ]
   };
 

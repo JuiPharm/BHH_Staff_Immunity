@@ -1,4 +1,5 @@
 import { StaffService } from '../services/StaffService';
+import { ClinicalRepository } from '../repositories/ClinicalRepository';
 import { AuthorizationMiddleware } from '../middleware/AuthorizationMiddleware';
 import { ResponseHelper } from '../utils/ResponseHelper';
 import { UserRole } from '../types';
@@ -6,9 +7,11 @@ import { CreateStaffDTO, UpdateStaffDTO } from '../dto/StaffDTO';
 
 export class StaffController {
   private staffService: StaffService;
+  private clinicalRepo: ClinicalRepository;
 
-  constructor(staffService?: StaffService) {
+  constructor(staffService?: StaffService, clinicalRepo?: ClinicalRepository) {
     this.staffService = staffService || new StaffService();
+    this.clinicalRepo = clinicalRepo || new ClinicalRepository();
   }
 
   /**
@@ -16,7 +19,6 @@ export class StaffController {
    * Enforces IDOR Check for Data Owner.
    */
   public getStaff(userRole: UserRole, userStaffId: string, targetStaffId: string, requestId: string): GoogleAppsScript.Content.TextOutput {
-    // 1. Authorization & IDOR Check
     const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, 'READ_STAFF_SELF', targetStaffId, requestId);
     if (!auth.isAuthorized) {
       return auth.errorResponse!;
@@ -48,23 +50,33 @@ export class StaffController {
       limit: 1000
     });
 
-    const items = (allStaff.items || []).map((s) => ({
-      staffId: s.StaffID,
-      hn: s.HN || '',
-      firstName: s.FirstName || '',
-      lastName: s.LastName || '',
-      department: s.DepartmentCode || '',
-      workGroup: s.WorkGroup || 'BACKOFFICE',
-      email: s.Email || '',
-      phone: s.Phone || '',
-      workReadiness: 'CLEARED'
-    }));
+    const items = (allStaff.items || []).map((s) => {
+      const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+      const isVerified = vacs.some((v) => String(v.VerificationStatus).toUpperCase() === 'VERIFIED' || String(v.VerificationStatus).toUpperCase() === 'APPROVED');
+      const isPending = vacs.some((v) => String(v.VerificationStatus).toUpperCase() === 'PENDING' || String(v.VerificationStatus).toUpperCase() === 'PENDING_VERIFICATION');
+
+      let readiness = 'NOT_CLEARED';
+      if (isVerified) readiness = 'CLEARED';
+      else if (isPending) readiness = 'CONDITIONALLY_CLEARED';
+
+      return {
+        staffId: s.StaffID,
+        hn: s.HN || '',
+        firstName: s.FirstName || '',
+        lastName: s.LastName || '',
+        department: s.DepartmentCode || '',
+        workGroup: s.WorkGroup || 'BACKOFFICE',
+        email: s.Email || '',
+        phone: (s as any).Phone || s.EmergencyPhone || '',
+        workReadiness: readiness
+      };
+    });
 
     return ResponseHelper.success(items, requestId);
   }
 
   /**
-   * Search and List staff records.
+   * Search and List staff records with pagination metadata.
    */
   public listStaff(userRole: UserRole, userStaffId: string, payload: any, requestId: string): GoogleAppsScript.Content.TextOutput {
     const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, 'READ_STAFF_LIST', undefined, requestId);
@@ -73,12 +85,12 @@ export class StaffController {
     }
 
     const result = this.staffService.searchStaff({
-      keyword: payload.keyword,
-      departmentCode: payload.departmentCode,
-      workGroup: payload.workGroup,
-      employmentStatus: payload.employmentStatus,
-      page: Number(payload.page) || 1,
-      limit: Number(payload.limit) || 10
+      keyword: payload?.keyword,
+      departmentCode: payload?.departmentCode,
+      workGroup: payload?.workGroup,
+      employmentStatus: payload?.employmentStatus,
+      page: Number(payload?.page) || 1,
+      limit: Number(payload?.limit) || 10
     });
 
     return ResponseHelper.success(result, requestId);

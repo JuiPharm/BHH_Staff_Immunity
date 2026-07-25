@@ -9,41 +9,7 @@ export const AuditLogView: React.FC = () => {
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fallbackLogs: AuditLogEntry[] = [
-    {
-      logUuid: 'log-001',
-      timestamp: new Date().toISOString(),
-      staffId: 'IC8001',
-      role: 'INFECTION_CONTROL',
-      action: 'LOGIN_SUCCESS',
-      targetResource: 'System/Auth',
-      detailsJson: '{}',
-      previousHash: '0000000000000000000000000000000000000000000000000000000000000000',
-      entryHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
-    },
-    {
-      logUuid: 'log-002',
-      timestamp: new Date(Date.now() - 3600000).toISOString(),
-      staffId: 'HR8002',
-      role: 'HR',
-      action: 'IMPORT_STAFF_MASTER',
-      targetResource: 'StaffMaster/BulkImport',
-      detailsJson: '{"recordCount": 15}',
-      previousHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-      entryHash: '8f4e2b10a9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2'
-    },
-    {
-      logUuid: 'log-003',
-      timestamp: new Date(Date.now() - 7200000).toISOString(),
-      staffId: 'MD8003',
-      role: 'PHYSICIAN',
-      action: 'PHYSICIAN_ASSESSMENT_ADD',
-      targetResource: 'Staff:ST8004/Assessment',
-      detailsJson: '{"outcome": "CLEARED"}',
-      previousHash: '8f4e2b10a9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2',
-      entryHash: '1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b'
-    }
-  ];
+
 
   useEffect(() => {
     loadLogs();
@@ -53,14 +19,14 @@ export const AuditLogView: React.FC = () => {
     setLoading(true);
     const res = await apiService.getAuditLogs();
     setLoading(false);
-    if (res.success && res.data && res.data.length > 0) {
+    if (res.success && res.data) {
       setLogs(res.data);
     } else {
-      setLogs(fallbackLogs);
+      setLogs([]);
     }
   };
 
-  const displayLogs = logs.length > 0 ? logs : fallbackLogs;
+  const displayLogs = logs;
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>

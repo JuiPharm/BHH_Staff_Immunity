@@ -1,14 +1,34 @@
-import React, { useState } from 'react';
-import { Box, Paper, Typography, Grid, Chip, Button, Table, TableHead, TableRow, TableCell, TableBody } from '@mui/material';
+import React, { useState, useEffect } from 'react';
+import { Box, Paper, Typography, Grid, Chip, Button, Table, TableHead, TableRow, TableCell, TableBody, CircularProgress } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ShieldIcon from '@mui/icons-material/Shield';
-import { getStoredSession } from '../../services/api';
+import { getStoredSession, apiService } from '../../services/api';
+import { HealthRecord } from '../../types';
 import { UploadModal } from '../registry/UploadModal';
 
 export const MyHealthRecordView: React.FC = () => {
   const session = getStoredSession();
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [records, setRecords] = useState<HealthRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadHealthRecords = async () => {
+    if (!session?.staffId) return;
+    setLoading(true);
+    const res = await apiService.getHealthRecords(session.staffId);
+    setLoading(false);
+    if (res.success && res.data) {
+      setRecords(res.data);
+    }
+  };
+
+  useEffect(() => {
+    loadHealthRecords();
+  }, [session?.staffId]);
+
+  const verifiedCount = records.filter(r => r.verificationStatus === 'VERIFIED').length;
+  const isCleared = verifiedCount >= 1 || records.length > 0;
 
   return (
     <Box sx={{ p: 3 }}>
@@ -40,16 +60,22 @@ export const MyHealthRecordView: React.FC = () => {
       </Paper>
 
       {/* Readiness Status Card */}
-      <Paper sx={{ p: 3, mb: 3, borderRadius: 2, borderLeft: '6px solid #2E7D32' }}>
+      <Paper sx={{ p: 3, mb: 3, borderRadius: 2, borderLeft: isCleared ? '6px solid #2E7D32' : '6px solid #ED6C02' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-          <CheckCircleIcon color="success" />
+          <CheckCircleIcon color={isCleared ? "success" : "warning"} />
           <Typography variant="h6" fontWeight={700} color="#0A2540">
             สถานะความพร้อมในการปฏิบัติงาน (Work Readiness Status)
           </Typography>
         </Box>
-        <Chip label="CLEARED (พร้อมปฏิบัติงานเต็มรูปแบบ)" color="success" sx={{ fontWeight: 800, fontSize: 16, py: 2, px: 1, my: 1 }} />
+        <Chip
+          label={isCleared ? "CLEARED (พร้อมปฏิบัติงาน)" : "PENDING (รอการตรวจสอบหลักฐาน)"}
+          color={isCleared ? "success" : "warning"}
+          sx={{ fontWeight: 800, fontSize: 16, py: 2, px: 1, my: 1 }}
+        />
         <Typography variant="body2" color="text.secondary">
-          มีภูมิคุ้มกันและผลตรวจสุขภาพผ่านตามเกณฑ์สถาบันโรงพยาบาลกรุงเทพหาดใหญ่ครบถ้วน 100%
+          {isCleared
+            ? "มีประวัติภูมิคุ้มกันและผลตรวจสุขภาพที่ได้รับการยืนยันตามเกณฑ์สถาบันโรงพยาบาลกรุงเทพหาดใหญ่"
+            : "กรุณาอัปโหลดหลักฐานฉีดวัคซีนหรือผลแล็บเพื่อเข้ารับการประเมินความพร้อม"}
         </Typography>
       </Paper>
 
@@ -62,36 +88,51 @@ export const MyHealthRecordView: React.FC = () => {
           <Chip icon={<ShieldIcon />} label="IDOR Protected (Own Record Only)" color="primary" variant="outlined" size="small" />
         </Box>
 
-        <Table>
-          <TableHead sx={{ backgroundColor: '#F8FAFC' }}>
-            <TableRow>
-              <TableCell sx={{ fontWeight: 700 }}>หมวดหมู่</TableCell>
-              <TableCell sx={{ fontWeight: 700 }}>ประเภท</TableCell>
-              <TableCell sx={{ fontWeight: 700 }}>วันที่รับบริการ/ตรวจ</TableCell>
-              <TableCell sx={{ fontWeight: 700 }}>สถานะการอนุมัติ</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            <TableRow hover>
-              <TableCell sx={{ fontWeight: 700 }}>MMR (หัด-หัดเยอรมัน-คางทูม)</TableCell>
-              <TableCell>VACCINE</TableCell>
-              <TableCell>2025-05-10</TableCell>
-              <TableCell><Chip label="VERIFIED" color="success" size="small" sx={{ fontWeight: 700 }} /></TableCell>
-            </TableRow>
-            <TableRow hover>
-              <TableCell sx={{ fontWeight: 700 }}>VARICELLA (สุกใส)</TableCell>
-              <TableCell>VACCINE</TableCell>
-              <TableCell>2025-06-01</TableCell>
-              <TableCell><Chip label="VERIFIED" color="success" size="small" sx={{ fontWeight: 700 }} /></TableCell>
-            </TableRow>
-            <TableRow hover>
-              <TableCell sx={{ fontWeight: 700 }}>CHEST X-RAY (เอกซเรย์ปอด)</TableCell>
-              <TableCell>LAB_TEST</TableCell>
-              <TableCell>2026-01-15</TableCell>
-              <TableCell><Chip label="VERIFIED" color="success" size="small" sx={{ fontWeight: 700 }} /></TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+            <CircularProgress size={32} />
+          </Box>
+        ) : (
+          <Table>
+            <TableHead sx={{ backgroundColor: '#F8FAFC' }}>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 700 }}>หมวดหมู่</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>ประเภท</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>ผลตรวจ / สถานะ</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>วันที่รับบริการ/ตรวจ</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>สถานะการอนุมัติ</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {records.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} align="center">
+                    <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
+                      ไม่พบประวัติรับบริการหรือผลตรวจในระบบ (สามารถกดอัปโหลดหลักฐานเพื่อบันทึกข้อมูลใหม่ได้)
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                records.map((row, idx) => (
+                  <TableRow key={row.recordUuid || idx} hover>
+                    <TableCell sx={{ fontWeight: 700 }}>{row.category}</TableCell>
+                    <TableCell><Chip label={row.recordType || 'VACCINE'} size="small" variant="outlined" /></TableCell>
+                    <TableCell>{row.resultOrStatus}</TableCell>
+                    <TableCell>{row.administeredOrTestDate}</TableCell>
+                    <TableCell>
+                      <Chip
+                        label={row.verificationStatus || 'VERIFIED'}
+                        color={row.verificationStatus === 'REJECTED' ? 'error' : row.verificationStatus === 'PENDING_VERIFICATION' ? 'warning' : 'success'}
+                        size="small"
+                        sx={{ fontWeight: 700 }}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        )}
       </Paper>
 
       {/* Evidence Upload Modal */}
@@ -99,7 +140,10 @@ export const MyHealthRecordView: React.FC = () => {
         open={uploadOpen}
         staffId={session?.staffId || 'ST8004'}
         onClose={() => setUploadOpen(false)}
-        onSuccess={() => setUploadOpen(false)}
+        onSuccess={() => {
+          setUploadOpen(false);
+          loadHealthRecords();
+        }}
       />
     </Box>
   );

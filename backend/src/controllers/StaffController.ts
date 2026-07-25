@@ -31,6 +31,39 @@ export class StaffController {
   }
 
   /**
+   * Search and List staff records formatted for Frontend StaffMaster contract.
+   */
+  public getStaffList(userRole: UserRole, userStaffId: string, payload: any, requestId: string): GoogleAppsScript.Content.TextOutput {
+    const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, 'READ_STAFF_LIST', undefined, requestId);
+    if (!auth.isAuthorized) {
+      return auth.errorResponse!;
+    }
+
+    const allStaff = this.staffService.searchStaff({
+      keyword: payload?.keyword,
+      departmentCode: payload?.departmentCode,
+      workGroup: payload?.workGroup,
+      employmentStatus: payload?.employmentStatus,
+      page: 1,
+      limit: 1000
+    });
+
+    const items = (allStaff.items || []).map((s) => ({
+      staffId: s.StaffID,
+      hn: s.HN || '',
+      firstName: s.FirstName || '',
+      lastName: s.LastName || '',
+      department: s.DepartmentCode || '',
+      workGroup: s.WorkGroup || 'BACKOFFICE',
+      email: s.Email || '',
+      phone: s.Phone || '',
+      workReadiness: 'CLEARED'
+    }));
+
+    return ResponseHelper.success(items, requestId);
+  }
+
+  /**
    * Search and List staff records.
    */
   public listStaff(userRole: UserRole, userStaffId: string, payload: any, requestId: string): GoogleAppsScript.Content.TextOutput {

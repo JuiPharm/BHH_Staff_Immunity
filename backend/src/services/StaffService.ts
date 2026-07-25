@@ -1,4 +1,6 @@
 import { StaffRepository } from '../repositories/StaffRepository';
+import { AccountRepository } from '../repositories/AccountRepository';
+import { SessionRepository } from '../repositories/SessionRepository';
 import {
   StaffRecordDTO,
   CreateStaffDTO,
@@ -10,9 +12,13 @@ import {
 
 export class StaffService {
   private staffRepo: StaffRepository;
+  private accountRepo: AccountRepository;
+  private sessionRepo: SessionRepository;
 
-  constructor(staffRepo?: StaffRepository) {
+  constructor(staffRepo?: StaffRepository, accountRepo?: AccountRepository, sessionRepo?: SessionRepository) {
     this.staffRepo = staffRepo || new StaffRepository();
+    this.accountRepo = accountRepo || new AccountRepository();
+    this.sessionRepo = sessionRepo || new SessionRepository();
   }
 
   /**
@@ -75,7 +81,7 @@ export class StaffService {
   }
 
   /**
-   * Creates new staff record with validation & duplicate check.
+   * Creates new staff record with validation & duplicate check. Also provisions User Account.
    */
   public createStaff(dto: CreateStaffDTO, createdBy: string): StaffRecordDTO {
     const validation = StaffValidationSchema.validateCreate(dto);
@@ -83,7 +89,12 @@ export class StaffService {
       throw new Error(`Validation Error: ${validation.errors.join(', ')}`);
     }
 
-    return this.staffRepo.createStaff(dto, createdBy);
+    const created = this.staffRepo.createStaff(dto, createdBy);
+
+    // Auto-provision user account
+    this.accountRepo.createAccount(dto.StaffID, 'password123', createdBy, 'DATA_OWNER', 'NORMAL_USER');
+
+    return created;
   }
 
   /**
@@ -101,9 +112,14 @@ export class StaffService {
   }
 
   /**
-   * Soft deletes a staff record.
+   * Soft deletes a staff record, disables user account, and revokes all active sessions.
    */
   public deleteStaff(staffId: string, deletedBy: string): boolean {
-    return this.staffRepo.softDeleteStaff(staffId, deletedBy);
+    const success = this.staffRepo.softDeleteStaff(staffId, deletedBy);
+    if (success) {
+      this.accountRepo.softDeleteAccount(staffId);
+      this.sessionRepo.revokeAllSessionsForStaff(staffId);
+    }
+    return success;
   }
 }

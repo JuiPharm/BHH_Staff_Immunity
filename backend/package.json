@@ -4,7 +4,7 @@
   "private": true,
   "description": "GAS Backend TypeScript for Staff Immunity Registry System - Bangkok Hospital Hat Yai",
   "scripts": {
-    "build": "tsc",
+    "build": "node build.js",
     "push": "clasp push"
   },
   "devDependencies": {

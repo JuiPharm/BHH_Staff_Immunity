@@ -1,4 +1,11 @@
 node_modules/
 dist/
 .env
+.env.local
 .DS_Store
+*.log
+.clasp.json
+
+# Ignore individual transpiled JS files in backend src, but keep Code.js
+backend/src/**/*.js
+!backend/src/Code.js

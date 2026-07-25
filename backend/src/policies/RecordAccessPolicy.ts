@@ -6,12 +6,12 @@ export class RecordAccessPolicy {
    */
   public static canAccessRecord(userRole: UserRole, userStaffId: string, targetStaffId: string): boolean {
     // Elevated Roles can access any staff record
-    if (userRole === 'INFECTION_CONTROL' || userRole === 'PHYSICIAN' || userRole === 'HR') {
+    if (userRole === 'INFECTION_CONTROL' || userRole === 'PHYSICIAN' || userRole === 'HR' || userRole === 'SUPERUSER' || userRole === 'ADMIN') {
       return true;
     }
 
     // Data Owner can ONLY access their own StaffID record
-    if (userRole === 'DATA_OWNER') {
+    if (userRole === 'DATA_OWNER' || userRole === 'NORMAL_USER') {
       return userStaffId.toUpperCase() === targetStaffId.toUpperCase();
     }
 
@@ -22,7 +22,7 @@ export class RecordAccessPolicy {
    * Checks if a user can edit/modify a staff member's health record.
    */
   public static canModifyHealthRecord(userRole: UserRole): boolean {
-    // Only Infection Control & Physician can modify health records
-    return userRole === 'INFECTION_CONTROL' || userRole === 'PHYSICIAN';
+    // Infection Control, Physician, Superuser, Admin can modify health records
+    return userRole === 'INFECTION_CONTROL' || userRole === 'PHYSICIAN' || userRole === 'SUPERUSER' || userRole === 'ADMIN';
   }
 }

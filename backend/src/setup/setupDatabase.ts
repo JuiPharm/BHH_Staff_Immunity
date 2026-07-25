@@ -1,11 +1,12 @@
 import { PasswordService } from '../services/PasswordService';
+import { AccountRepository } from '../repositories/AccountRepository';
 
 /**
  * Setup Database Script for Staff Immunity & Health Registry
  * Creates 3 Spreadsheets and 22 Sheets with Header Rows, Migration Version, and System Constant Seeds.
  */
 
-export const SCHEMA_MIGRATION_VERSION = '1.0.0';
+export const SCHEMA_MIGRATION_VERSION = '1.1.0';
 
 export interface SheetSchemaConfig {
   name: string;
@@ -37,7 +38,7 @@ export const CLINICAL_DATABASE_CONFIG: DatabaseConfig = {
       headers: [
         'VaccinationUUID', 'StaffID', 'VaccineCategory', 'DoseNumber',
         'AdministeredDate', 'ManufacturerLot', 'ExpiryDate', 'AdministeredLocation',
-        'DocumentUUID', 'VerificationStatus',
+        'DocumentUUID', 'VerificationStatus', 'Source',
         'CreatedAt', 'CreatedBy', 'UpdatedAt', 'UpdatedBy', 'RecordVersion', 'IsDeleted'
       ]
     },
@@ -45,7 +46,7 @@ export const CLINICAL_DATABASE_CONFIG: DatabaseConfig = {
       name: 'LAB_RESULT',
       headers: [
         'LabResultUUID', 'StaffID', 'LabCategory', 'QuantitativeValue', 'Unit',
-        'QualitativeResult', 'TestDate', 'LabName', 'DocumentUUID', 'VerificationStatus',
+        'QualitativeResult', 'TestDate', 'LabName', 'DocumentUUID', 'VerificationStatus', 'Source',
         'CreatedAt', 'CreatedBy', 'UpdatedAt', 'UpdatedBy', 'RecordVersion', 'IsDeleted'
       ]
     },
@@ -198,9 +199,10 @@ export const AUDIT_DATABASE_CONFIG: DatabaseConfig = {
     {
       name: 'AUDIT_LOG',
       headers: [
-        'LogUUID', 'Timestamp', 'StaffID', 'RoleCode', 'Action', 'TargetResource', 'DetailsJson',
-        'PreviousHash', 'CurrentHash',
-        'CreatedAt', 'CreatedBy', 'UpdatedAt', 'UpdatedBy', 'RecordVersion', 'IsDeleted'
+        'AuditID', 'Timestamp', 'ActorStaffID', 'ActorRole', 'Action',
+        'EntityType', 'EntityID', 'RequestID', 'OldValueHash', 'NewValueHash',
+        'MetadataJSON', 'IPAddress', 'UserAgentHash', 'Success', 'FailureReason',
+        'PreviousHash', 'CurrentHash'
       ]
     },
     {
@@ -222,6 +224,9 @@ export function setupAllDatabases(): void {
 
   // Force Security DB to use user-specified Sheet ID
   props.setProperty('DB_SECURITY_SPREADSHEET_ID', '1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8');
+
+  // Initialize Password Pepper
+  PasswordService.getPepper();
 
   [CLINICAL_DATABASE_CONFIG, SECURITY_DATABASE_CONFIG, AUDIT_DATABASE_CONFIG].forEach((config) => {
     let ss: GoogleAppsScript.Spreadsheet.Spreadsheet | null = null;
@@ -261,9 +266,9 @@ export function setupAllDatabases(): void {
     }
 
     config.sheets.forEach((sheetCfg) => {
-      let sheet = ss.getSheetByName(sheetCfg.name);
+      let sheet = ss!.getSheetByName(sheetCfg.name);
       if (!sheet) {
-        sheet = ss.insertSheet(sheetCfg.name);
+        sheet = ss!.insertSheet(sheetCfg.name);
       }
 
       // Write Header Row if empty
@@ -284,14 +289,75 @@ export function setupAllDatabases(): void {
   // Register Migration Tracking Field
   props.setProperty('SCHEMA_MIGRATION_VERSION', SCHEMA_MIGRATION_VERSION);
 
-  // Seed System Constant Metadata ONLY (No Staff PII!)
+  // Seed System Constants & Initial Data
   seedSystemConstants();
-
-  // Seed 5 Sample Staff for Testing
   seedSampleData();
-  
-  // Seed User Accounts with properly hashed passwords
   seedUserAccounts();
+}
+
+/**
+ * Schema Repair function: appends missing headers to existing sheets without shifting data
+ */
+export function repairSystemSchema(): { repairedSheets: string[]; appendedHeaders: Record<string, string[]> } {
+  const props = PropertiesService.getScriptProperties();
+  const repairedSheets: string[] = [];
+  const appendedHeaders: Record<string, string[]> = {};
+
+  [CLINICAL_DATABASE_CONFIG, SECURITY_DATABASE_CONFIG, AUDIT_DATABASE_CONFIG].forEach((config) => {
+    const ssId = props.getProperty(config.propertyKey) || (config.propertyKey === 'DB_SECURITY_SPREADSHEET_ID' ? '1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8' : null);
+    if (!ssId) return;
+
+    try {
+      const ss = SpreadsheetApp.openById(ssId);
+      config.sheets.forEach((sheetCfg) => {
+        let sheet = ss.getSheetByName(sheetCfg.name);
+        if (!sheet) {
+          sheet = ss.insertSheet(sheetCfg.name);
+          sheet.appendRow(sheetCfg.headers);
+          sheet.getRange(1, 1, 1, sheetCfg.headers.length).setFontWeight('bold').setBackground('#0A2540').setFontColor('#FFFFFF');
+          sheet.setFrozenRows(1);
+          repairedSheets.push(`${config.spreadsheetTitle} -> ${sheetCfg.name} (Created)`);
+          return;
+        }
+
+        const lastCol = sheet.getLastColumn();
+        if (lastCol === 0) {
+          sheet.appendRow(sheetCfg.headers);
+          sheet.getRange(1, 1, 1, sheetCfg.headers.length).setFontWeight('bold').setBackground('#0A2540').setFontColor('#FFFFFF');
+          sheet.setFrozenRows(1);
+          repairedSheets.push(`${config.spreadsheetTitle} -> ${sheetCfg.name} (Initialized Header)`);
+          return;
+        }
+
+        const existingHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map((h) => String(h).trim());
+        const missingHeaders = sheetCfg.headers.filter((h) => !existingHeaders.includes(h));
+
+        if (missingHeaders.length > 0) {
+          missingHeaders.forEach((missingH, idx) => {
+            const newColIndex = lastCol + idx + 1;
+            const headerCell = sheet!.getRange(1, newColIndex);
+            headerCell.setValue(missingH).setFontWeight('bold').setBackground('#0A2540').setFontColor('#FFFFFF');
+          });
+
+          const key = `${config.spreadsheetTitle}:${sheetCfg.name}`;
+          appendedHeaders[key] = missingHeaders;
+          repairedSheets.push(`${config.spreadsheetTitle} -> ${sheetCfg.name} (+${missingHeaders.length} headers)`);
+        }
+      });
+    } catch (e) {
+      console.error(`Error repairing database ${config.spreadsheetTitle}:`, e);
+    }
+  });
+
+  return { repairedSheets, appendedHeaders };
+}
+
+/**
+ * Resets Test User Accounts back to default known states for testing environments
+ */
+export function resetTestUserAccounts(): { resetCount: number; status: string } {
+  seedUserAccounts();
+  return { resetCount: 8, status: 'SUCCESS' };
 }
 
 /**
@@ -343,7 +409,7 @@ function seedSystemConstants(): void {
 }
 
 /**
- * Seeds 5 Sample Staff for Testing
+ * Seeds Sample Staff for Testing
  */
 function seedSampleData(): void {
   const props = PropertiesService.getScriptProperties();
@@ -354,7 +420,6 @@ function seedSampleData(): void {
   const staffSheet = ss.getSheetByName('STAFF');
   if (!staffSheet) return;
 
-  // Add only if the sheet is empty (only header exists)
   if (staffSheet.getLastRow() === 1) {
     const now = new Date().toISOString();
     const sampleStaff = [
@@ -373,45 +438,19 @@ function seedSampleData(): void {
  * Seeds User Accounts for Testing
  */
 function seedUserAccounts(): void {
-  const props = PropertiesService.getScriptProperties();
-  const securitySsId = props.getProperty(SECURITY_DATABASE_CONFIG.propertyKey);
-  if (!securitySsId) return;
+  const accountRepo = new AccountRepository();
+  const userRoleMap: Record<string, { functionalRole: string; userLevel: 'SUPERUSER' | 'NORMAL_USER' }> = {
+    'IC8001': { functionalRole: 'INFECTION_CONTROL', userLevel: 'SUPERUSER' },
+    'HR8002': { functionalRole: 'HR', userLevel: 'SUPERUSER' },
+    'MD8003': { functionalRole: 'PHYSICIAN', userLevel: 'SUPERUSER' },
+    'ST8004': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' },
+    'ST8005': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' },
+    'ST8006': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' },
+    'ST8007': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' },
+    'ST8008': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' }
+  };
 
-  const ss = SpreadsheetApp.openById(securitySsId);
-  const userSheet = ss.getSheetByName('USER_ACCOUNT');
-  if (!userSheet) return;
-
-  // Add only if the sheet is empty (only header exists)
-  if (userSheet.getLastRow() === 1) {
-    const now = new Date().toISOString();
-    
-    const userRoleMap: Record<string, { functionalRole: string; userLevel: string }> = {
-      'IC8001': { functionalRole: 'INFECTION_CONTROL', userLevel: 'SUPERUSER' },
-      'HR8002': { functionalRole: 'HR', userLevel: 'SUPERUSER' },
-      'MD8003': { functionalRole: 'PHYSICIAN', userLevel: 'SUPERUSER' },
-      'ST8004': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' },
-      'ST8005': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' },
-      'ST8006': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' },
-      'ST8007': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' },
-      'ST8008': { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' }
-    };
-
-    const staffIds = Object.keys(userRoleMap);
-
-    staffIds.forEach((staffId, index) => {
-      // Use 10,000 iterations for testing instead of 100,000 to save GAS execution time during setup
-      const { hash, salt, iterations } = PasswordService.hashPassword('password123', undefined, 10000);
-      const userUuid = `user-00${index + 1}`;
-      const roleInfo = userRoleMap[staffId] || { functionalRole: 'DATA_OWNER', userLevel: 'NORMAL_USER' };
-      
-      const userRow = [
-        userUuid, staffId, hash, salt, iterations,
-        0, '', false, 'ACTIVE',
-        roleInfo.functionalRole, roleInfo.userLevel, '', '',
-        now, 'SYSTEM', now, 'SYSTEM', 1, false
-      ];
-      
-      userSheet.appendRow(userRow);
-    });
-  }
+  Object.entries(userRoleMap).forEach(([staffId, info]) => {
+    accountRepo.createAccount(staffId, 'password123', 'SYSTEM', info.functionalRole, info.userLevel);
+  });
 }

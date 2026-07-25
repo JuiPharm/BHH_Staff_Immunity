@@ -4,7 +4,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  base: '/BHH_Staff_Immunity/', // Exact GitHub Pages Repository Base Path
+  base: process.env.VITE_BASE_PATH || './',
   plugins: [
     react(),
     VitePWA({

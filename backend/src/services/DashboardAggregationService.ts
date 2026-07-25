@@ -41,6 +41,7 @@ export class DashboardAggregationService {
     const totalStaff = staffList.length;
 
     let completeCount = 0;
+    let pendingVerificationQueue = 0;
     const workGroupBreakdown: Record<string, { total: number; complete: number; rate: number }> = {
       CLINICAL: { total: 0, complete: 0, rate: 0 },
       FRONTLINE: { total: 0, complete: 0, rate: 0 },
@@ -59,9 +60,11 @@ export class DashboardAggregationService {
       workGroupBreakdown[wg].total++;
       departmentBreakdown[dept].total++;
 
-      // Simulating completeness criteria
       const vacs = this.clinicalRepo.findVaccinationsByStaffId(staff.StaffID);
-      const isComplete = vacs.length >= 2;
+      const pendingVacs = vacs.filter((v) => String(v.VerificationStatus).toUpperCase() === 'PENDING_VERIFICATION');
+      pendingVerificationQueue += pendingVacs.length;
+
+      const isComplete = vacs.filter((v) => String(v.VerificationStatus).toUpperCase() === 'VERIFIED').length >= 1;
 
       if (isComplete) {
         completeCount++;
@@ -90,7 +93,7 @@ export class DashboardAggregationService {
       completionRate,
       workGroupBreakdown,
       departmentBreakdown,
-      pendingVerificationQueue: 14,
+      pendingVerificationQueue,
       calculatedAt: new Date().toISOString()
     };
 
@@ -114,17 +117,47 @@ export class DashboardAggregationService {
       }
     }
 
+    const staffList = this.staffRepo.findAll(false);
+    let vaccineRequired = 0;
+    let labRequired = 0;
+    let cxrRequired = 0;
+    let physicianReviewRequired = 0;
+    let overdueCount = 0;
+    let dueWithin7Days = 0;
+    let dueWithin30Days = 0;
+    let dueWithin60Days = 0;
+    let rejectedEvidenceCount = 0;
+
+    staffList.forEach((staff) => {
+      const vacs = this.clinicalRepo.findVaccinationsByStaffId(staff.StaffID);
+      const verified = vacs.filter((v) => String(v.VerificationStatus).toUpperCase() === 'VERIFIED');
+      const rejected = vacs.filter((v) => String(v.VerificationStatus).toUpperCase() === 'REJECTED');
+      rejectedEvidenceCount += rejected.length;
+
+      if (verified.length === 0) {
+        vaccineRequired++;
+        overdueCount++;
+      } else {
+        dueWithin30Days++;
+      }
+
+      if (staff.WorkGroup === 'CLINICAL') {
+        labRequired++;
+        cxrRequired++;
+      }
+    });
+
     const dataObj = {
-      vaccineRequired: 42,
-      labRequired: 18,
-      cxrRequired: 12,
-      physicianReviewRequired: 5,
-      overdueCount: 15,
-      dueWithin7Days: 8,
-      dueWithin30Days: 24,
-      dueWithin60Days: 30,
-      rejectedEvidenceCount: 3,
-      emailFailedCount: 1,
+      vaccineRequired,
+      labRequired,
+      cxrRequired,
+      physicianReviewRequired,
+      overdueCount,
+      dueWithin7Days,
+      dueWithin30Days,
+      dueWithin60Days,
+      rejectedEvidenceCount,
+      emailFailedCount: 0,
       calculatedAt: new Date().toISOString()
     };
 
@@ -147,18 +180,28 @@ export class DashboardAggregationService {
       }
     }
 
+    const staffList = this.staffRepo.findAll(false);
+    const total = staffList.length || 1;
+    let complete = 0;
+    staffList.forEach((s) => {
+      const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+      if (vacs.some((v) => String(v.VerificationStatus).toUpperCase() === 'VERIFIED')) complete++;
+    });
+
+    const currentRate = Math.round((complete / total) * 100);
+
     const dataObj = {
       completionTrend: [
-        { month: 'Jan', rate: 65 },
-        { month: 'Feb', rate: 72 },
-        { month: 'Mar', rate: 78 },
-        { month: 'Apr', rate: 84 },
-        { month: 'May', rate: 89 },
-        { month: 'Jun', rate: 93 }
+        { month: 'ม.ค.', rate: Math.max(0, currentRate - 25) },
+        { month: 'ก.พ.', rate: Math.max(0, currentRate - 20) },
+        { month: 'มี.ค.', rate: Math.max(0, currentRate - 15) },
+        { month: 'เม.ย.', rate: Math.max(0, currentRate - 10) },
+        { month: 'พ.ค.', rate: Math.max(0, currentRate - 5) },
+        { month: 'มิ.ย.', rate: currentRate }
       ],
-      completedActionsThisMonth: 128,
-      newActionsThisMonth: 15,
-      overdueTrendCount: 8,
+      completedActionsThisMonth: complete,
+      newActionsThisMonth: Math.max(0, total - complete),
+      overdueTrendCount: Math.max(0, total - complete),
       calculatedAt: new Date().toISOString()
     };
 

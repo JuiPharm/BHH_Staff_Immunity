@@ -16,37 +16,37 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabChange, userR
       id: 'dashboard',
       label: 'แดชบอร์ดติดตามภาพรวม',
       icon: <LayoutDashboard size={20} />,
-      roles: ['INFECTION_CONTROL', 'HR', 'PHYSICIAN']
+      roles: ['INFECTION_CONTROL', 'HR', 'PHYSICIAN', 'SUPERUSER', 'ADMIN']
     },
     {
       id: 'registry',
       label: 'บันทึกวัคซีน & ผลตรวจ',
       icon: <FileSpreadsheet size={20} />,
-      roles: ['INFECTION_CONTROL', 'PHYSICIAN', 'DATA_OWNER']
+      roles: ['INFECTION_CONTROL', 'PHYSICIAN', 'DATA_OWNER', 'SUPERUSER', 'ADMIN', 'NORMAL_USER']
     },
     {
       id: 'staff',
       label: 'ข้อมูลบุคลากร (Staff Master)',
       icon: <Users size={20} />,
-      roles: ['INFECTION_CONTROL', 'HR', 'PHYSICIAN']
+      roles: ['INFECTION_CONTROL', 'HR', 'PHYSICIAN', 'SUPERUSER', 'ADMIN']
     },
     {
       id: 'physician',
       label: 'การประเมินแพทย์ (Physician)',
       icon: <Stethoscope size={20} />,
-      roles: ['PHYSICIAN', 'INFECTION_CONTROL']
+      roles: ['PHYSICIAN', 'INFECTION_CONTROL', 'SUPERUSER', 'ADMIN']
     },
     {
       id: 'rules',
       label: 'จัดการเกณฑ์สุขภาพ (Rules)',
       icon: <Sliders size={20} />,
-      roles: ['INFECTION_CONTROL', 'PHYSICIAN']
+      roles: ['INFECTION_CONTROL', 'PHYSICIAN', 'SUPERUSER', 'ADMIN']
     },
     {
       id: 'audit',
       label: 'ประวัติระบบ (Audit Logs)',
       icon: <ShieldCheck size={20} />,
-      roles: ['INFECTION_CONTROL']
+      roles: ['INFECTION_CONTROL', 'SUPERUSER', 'ADMIN']
     }
   ];
 

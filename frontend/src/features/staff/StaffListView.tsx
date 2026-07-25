@@ -39,7 +39,8 @@ export const StaffListView: React.FC<StaffListViewProps> = ({ userRole }) => {
   const loadStaff = async () => {
     const res = await apiService.getStaffList();
     if (res.success && res.data) {
-      setStaffList(res.data);
+      const dataArray = Array.isArray(res.data) ? res.data : (res.data as any).items || [];
+      setStaffList(dataArray);
     }
   };
 

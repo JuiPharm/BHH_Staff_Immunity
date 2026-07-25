@@ -20,19 +20,31 @@ export class SheetRepository {
     return SpreadsheetApp.getActiveSpreadsheet();
   }
 
+  private static isLockHeld = false;
+
   /**
    * Executes a write operation wrapped in LockService script lock to prevent concurrency race conditions.
+   * Supports re-entrant locking within the same execution thread.
    */
   public executeWithLock<T>(action: () => T, timeoutMs = 10000): T {
+    if (SheetRepository.isLockHeld) {
+      // Lock already acquired by outer caller in this execution context
+      return action();
+    }
+
     const lock = LockService.getScriptLock();
     try {
       const acquired = lock.tryLock(timeoutMs);
       if (!acquired) {
         throw new Error('System is busy processing another transaction. Please try again.');
       }
+      SheetRepository.isLockHeld = true;
       return action();
     } finally {
-      lock.releaseLock();
+      SheetRepository.isLockHeld = false;
+      try {
+        lock.releaseLock();
+      } catch {}
     }
   }
 

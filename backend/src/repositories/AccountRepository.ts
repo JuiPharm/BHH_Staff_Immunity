@@ -1,5 +1,6 @@
 import { SheetRepository } from './SheetRepository';
 import { PasswordService } from '../services/PasswordService';
+import { CryptoService } from '../services/CryptoService';
 
 export interface UserAccountRecord {
   UserUUID: string;
@@ -120,11 +121,14 @@ export class AccountRepository {
   }
 
   /**
-   * Updates user password hash, salt, and clears reset token.
+   * Updates user password hash, salt, iterations, records history, and clears reset token.
    */
-  public updatePassword(staffId: string, newHash: string, newSalt: string): void {
+  public updatePassword(staffId: string, newHash: string, newSalt: string, iterations = PasswordService.DEFAULT_ITERATIONS): void {
     const user = this.findByStaffId(staffId);
     if (!user) return;
+
+    // Record password in history before updating
+    PasswordService.recordPasswordHistory(staffId, newHash, newSalt, iterations);
 
     this.sheetRepo.updateRow(
       'USER_ACCOUNT',
@@ -133,6 +137,7 @@ export class AccountRepository {
       {
         PasswordHash: newHash,
         Salt: newSalt,
+        Iterations: iterations,
         MustChangePassword: false,
         ResetTokenHash: '',
         ResetTokenExpiresAt: '',
@@ -140,6 +145,14 @@ export class AccountRepository {
       },
       user.RecordVersion
     );
+  }
+
+  /**
+   * Auto-upgrades a legacy password hash to the current peppered PBKDF2 scheme.
+   */
+  public upgradeLegacyPassword(staffId: string, plainPassword: string): void {
+    const { hash, salt, iterations } = PasswordService.hashPassword(plainPassword);
+    this.updatePassword(staffId, hash, salt, iterations);
   }
 
   /**
@@ -224,5 +237,55 @@ export class AccountRepository {
     };
 
     this.sheetRepo.appendRow('USER_ACCOUNT', headers, rowObject);
+    PasswordService.recordPasswordHistory(staffId, hash, salt, iterations);
+  }
+
+  /**
+   * Soft deletes / disables a user account.
+   */
+  public softDeleteAccount(staffId: string): void {
+    const user = this.findByStaffId(staffId);
+    if (!user) return;
+
+    this.sheetRepo.updateRow(
+      'USER_ACCOUNT',
+      'StaffID',
+      staffId,
+      {
+        AccountStatus: 'DISABLED',
+        IsDeleted: true,
+        UpdatedAt: new Date().toISOString()
+      },
+      user.RecordVersion
+    );
+  }
+
+  /**
+   * Returns account diagnostic status for security auditing (WITHOUT password hashes or salts!).
+   */
+  public diagnoseAuthentication(targetStaffId?: string): any[] {
+    const rows = this.sheetRepo.getRows('USER_ACCOUNT');
+    const now = new Date().toISOString();
+
+    return rows
+      .filter((r) => !r.IsDeleted && (!targetStaffId || String(r.StaffID).toUpperCase() === targetStaffId.toUpperCase()))
+      .map((r) => {
+        const lockoutUntil = r.LockoutUntil ? String(r.LockoutUntil) : '';
+        const isLocked = r.AccountStatus === 'LOCKED' || (lockoutUntil && lockoutUntil > now);
+
+        return {
+          staffId: String(r.StaffID),
+          accountStatus: String(r.AccountStatus || 'ACTIVE'),
+          functionalRole: String(r.FunctionalRole || 'DATA_OWNER'),
+          userLevel: String(r.UserLevel || 'NORMAL_USER'),
+          failedLoginCount: Number(r.FailedLoginCount) || 0,
+          isLocked: isLocked,
+          lockoutUntil: lockoutUntil,
+          mustChangePassword: r.MustChangePassword === true || String(r.MustChangePassword) === 'TRUE',
+          hasPasswordHash: Boolean(r.PasswordHash),
+          hasSalt: Boolean(r.Salt),
+          iterations: Number(r.Iterations) || PasswordService.DEFAULT_ITERATIONS
+        };
+      });
   }
 }

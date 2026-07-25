@@ -20,7 +20,11 @@ export const setStoredSession = (session: UserSession | null) => {
   }
 };
 
-export const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbx4PX8yYrTZi49I_aHmv1EFnaLMCMjI0MdIOfEYVpZef2HtH5-o-TSkCwOkSThq0ND6/exec';
+// Dynamic GAS API URL from Vite environment variable or runtime window setting with default fallback
+export const GAS_API_URL =
+  (import.meta as any).env?.VITE_GAS_API_URL ||
+  (window as any).GAS_API_URL ||
+  'https://script.google.com/macros/s/AKfycbx4PX8yYrTZi49I_aHmv1EFnaLMCMjI0MdIOfEYVpZef2HtH5-o-TSkCwOkSThq0ND6/exec';
 
 /**
  * Generic API Caller for Google Apps Script
@@ -30,6 +34,7 @@ async function callApi<T = any>(action: string, extraPayload: any = {}): Promise
   
   const payload = {
     action,
+    token: session?.token || '',
     role: session?.role || 'DATA_OWNER',
     staffId: session?.staffId || 'UNKNOWN',
     ...extraPayload
@@ -99,8 +104,6 @@ export const apiService = {
   getHealthRecords: async (staffId: string): Promise<ApiResponse<HealthRecord[]>> => {
     return callApi<HealthRecord[]>('getHealthRecords', { targetStaffId: staffId });
   },
-
-  // --- Below Actions might not be fully implemented in GAS yet ---
 
   createHealthRecord: async (recordData: Partial<HealthRecord>, file?: File): Promise<ApiResponse<HealthRecord>> => {
     // Note: File upload to GAS requires converting file to Base64

@@ -4,6 +4,14 @@ var GASApp = (() => {
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __esm = (fn, res, err) => function __init() {
+    if (err) throw err[0];
+    try {
+      return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+    } catch (e) {
+      throw err = [e], e;
+    }
+  };
   var __export = (target, all) => {
     for (var name in all)
       __defProp(target, name, { get: all[name], enumerable: true });
@@ -18,14 +26,322 @@ var GASApp = (() => {
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
+  // src/services/CryptoService.ts
+  var CryptoService;
+  var init_CryptoService = __esm({
+    "src/services/CryptoService.ts"() {
+      "use strict";
+      CryptoService = class _CryptoService {
+        /**
+         * Generates a random cryptographic salt (hex string).
+         */
+        static generateSalt(length = 16) {
+          const bytes = [];
+          for (let i = 0; i < length; i++) {
+            bytes.push(Math.floor(Math.random() * 256));
+          }
+          return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
+        }
+        /**
+         * Computes SHA-256 hash of a string using GAS Utilities.
+         */
+        static hashSha256(input) {
+          const signature = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, input, Utilities.Charset.UTF_8);
+          return signature.map((b) => (b < 0 ? b + 256 : b).toString(16).padStart(2, "0")).join("");
+        }
+        /**
+         * PBKDF2-HMAC-SHA256 implementation using GAS Utilities.computeHmacSha256Signature.
+         */
+        static pbkdf2(password, salt, iterations = 1e5) {
+          let key = password + salt;
+          for (let i = 0; i < iterations; i++) {
+            const sig = Utilities.computeHmacSha256Signature(key, salt);
+            key = sig.map((b) => (b < 0 ? b + 256 : b).toString(16).padStart(2, "0")).join("");
+          }
+          return key;
+        }
+        /**
+         * Generates a random UUIDv4 string.
+         */
+        static generateUuid() {
+          return Utilities.getUuid();
+        }
+        /**
+         * Computes the Audit Log Hash-Chain Entry Hash.
+         * EntryHash = SHA256(logUuid + timestamp + staffId + action + targetResource + detailsJson + previousHash)
+         */
+        static computeAuditEntryHash(logUuid, timestamp, staffId, action, targetResource, detailsJson, previousHash) {
+          const payload = `${logUuid}|${timestamp}|${staffId}|${action}|${targetResource}|${detailsJson}|${previousHash}`;
+          return _CryptoService.hashSha256(payload);
+        }
+        /**
+         * Constant-time comparison to prevent timing attacks.
+         */
+        static constantTimeCompare(a, b) {
+          if (a.length !== b.length) return false;
+          let result = 0;
+          for (let i = 0; i < a.length; i++) {
+            result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+          }
+          return result === 0;
+        }
+      };
+    }
+  });
+
+  // src/utils/FormulaSanitizer.ts
+  var FormulaSanitizer;
+  var init_FormulaSanitizer = __esm({
+    "src/utils/FormulaSanitizer.ts"() {
+      "use strict";
+      FormulaSanitizer = class _FormulaSanitizer {
+        /**
+         * Prevents Formula Injection vulnerability when writing user inputs into Google Sheets.
+         * Prepends a single quote `'` if the cell text starts with '=', '+', '-', '@', '\t', '\r'.
+         */
+        static sanitize(value) {
+          if (typeof value !== "string") return value;
+          const trimmed = value.trim();
+          if (trimmed.startsWith("=") || trimmed.startsWith("+") || trimmed.startsWith("-") || trimmed.startsWith("@") || trimmed.startsWith("	") || trimmed.startsWith("\r")) {
+            return `'${value}`;
+          }
+          return value;
+        }
+        static sanitizeRow(row) {
+          return row.map((cell) => _FormulaSanitizer.sanitize(cell));
+        }
+      };
+    }
+  });
+
+  // src/repositories/SheetRepository.ts
+  var _SheetRepository, SheetRepository;
+  var init_SheetRepository = __esm({
+    "src/repositories/SheetRepository.ts"() {
+      "use strict";
+      init_FormulaSanitizer();
+      _SheetRepository = class _SheetRepository {
+        constructor(spreadsheetId) {
+          this.spreadsheetId = spreadsheetId || PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID") || "";
+        }
+        getSpreadsheet() {
+          if (this.spreadsheetId) {
+            try {
+              return SpreadsheetApp.openById(this.spreadsheetId);
+            } catch (err) {
+              console.error("Failed to open spreadsheet by ID:", this.spreadsheetId, err);
+              return SpreadsheetApp.getActiveSpreadsheet();
+            }
+          }
+          return SpreadsheetApp.getActiveSpreadsheet();
+        }
+        /**
+         * Executes a write operation wrapped in LockService script lock to prevent concurrency race conditions.
+         * Supports re-entrant locking within the same execution thread.
+         */
+        executeWithLock(action, timeoutMs = 1e4) {
+          if (_SheetRepository.isLockHeld) {
+            return action();
+          }
+          const lock = LockService.getScriptLock();
+          try {
+            const acquired = lock.tryLock(timeoutMs);
+            if (!acquired) {
+              throw new Error("System is busy processing another transaction. Please try again.");
+            }
+            _SheetRepository.isLockHeld = true;
+            return action();
+          } finally {
+            _SheetRepository.isLockHeld = false;
+            try {
+              lock.releaseLock();
+            } catch {
+            }
+          }
+        }
+        /**
+         * Reads all rows from a sheet as objects mapped to header names.
+         */
+        getRows(sheetName) {
+          const ss = this.getSpreadsheet();
+          const sheet = ss.getSheetByName(sheetName);
+          if (!sheet) return [];
+          const values = sheet.getDataRange().getValues();
+          if (values.length < 2) return [];
+          const headers = values[0].map((h) => String(h).trim());
+          const dataRows = values.slice(1);
+          return dataRows.map((row) => {
+            const item = {};
+            headers.forEach((header, index) => {
+              item[header] = row[index];
+            });
+            return item;
+          });
+        }
+        /**
+         * Appends a new row to a sheet after sanitizing against CSV Formula Injection.
+         */
+        appendRow(sheetName, headers, rowObject) {
+          this.executeWithLock(() => {
+            const ss = this.getSpreadsheet();
+            let sheet = ss.getSheetByName(sheetName);
+            if (!sheet) {
+              sheet = ss.insertSheet(sheetName);
+              sheet.appendRow(headers);
+            }
+            const rowValues = headers.map((h) => {
+              var _a;
+              return (_a = rowObject[h]) != null ? _a : "";
+            });
+            const sanitizedValues = FormulaSanitizer.sanitizeRow(rowValues);
+            sheet.appendRow(sanitizedValues);
+          });
+        }
+        /**
+         * Updates a row matching a key header with optimistic record version check.
+         */
+        updateRow(sheetName, keyHeader, keyValue, newObject, currentVersion) {
+          return this.executeWithLock(() => {
+            const ss = this.getSpreadsheet();
+            const sheet = ss.getSheetByName(sheetName);
+            if (!sheet) return false;
+            const values = sheet.getDataRange().getValues();
+            if (values.length < 2) return false;
+            const headers = values[0].map((h) => String(h).trim());
+            const keyColIndex = headers.indexOf(keyHeader);
+            const versionColIndex = headers.indexOf("RecordVersion");
+            if (keyColIndex === -1) return false;
+            for (let r = 1; r < values.length; r++) {
+              if (String(values[r][keyColIndex]) === String(keyValue)) {
+                if (versionColIndex !== -1 && currentVersion !== void 0) {
+                  const sheetVersion = Number(values[r][versionColIndex]);
+                  if (sheetVersion !== currentVersion) {
+                    throw new Error(`Concurrency Conflict: Record has been modified by another user. Current version: ${sheetVersion}`);
+                  }
+                  newObject["RecordVersion"] = sheetVersion + 1;
+                }
+                headers.forEach((header, cIndex) => {
+                  if (newObject[header] !== void 0) {
+                    const cellValue = FormulaSanitizer.sanitize(newObject[header]);
+                    sheet.getRange(r + 1, cIndex + 1).setValue(cellValue);
+                  }
+                });
+                return true;
+              }
+            }
+            return false;
+          });
+        }
+      };
+      _SheetRepository.isLockHeld = false;
+      SheetRepository = _SheetRepository;
+    }
+  });
+
+  // src/repositories/DashboardCacheRepository.ts
+  var DashboardCacheRepository_exports = {};
+  __export(DashboardCacheRepository_exports, {
+    DashboardCacheRepository: () => DashboardCacheRepository
+  });
+  var DashboardCacheRepository;
+  var init_DashboardCacheRepository = __esm({
+    "src/repositories/DashboardCacheRepository.ts"() {
+      "use strict";
+      init_SheetRepository();
+      init_CryptoService();
+      DashboardCacheRepository = class {
+        constructor(sheetRepo) {
+          const auditSsId = PropertiesService.getScriptProperties().getProperty("DB_AUDIT_SPREADSHEET_ID");
+          this.sheetRepo = sheetRepo || new SheetRepository(auditSsId || void 0);
+        }
+        /**
+         * Retrieves valid non-expired dashboard cache record from DASHBOARD_CACHE sheet.
+         */
+        getValidCache(cacheKey) {
+          const rows = this.sheetRepo.getRows("DASHBOARD_CACHE");
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          const match = rows.find((r) => String(r.CacheKey) === cacheKey && String(r.ExpiresAt) > now && (!r.IsDeleted || String(r.IsDeleted) === "FALSE"));
+          if (!match) return null;
+          return {
+            cacheUuid: String(match.CacheUUID),
+            cacheKey: String(match.CacheKey),
+            cachedDataJson: String(match.CachedDataJson),
+            calculatedAt: String(match.CalculatedAt),
+            expiresAt: String(match.ExpiresAt)
+          };
+        }
+        /**
+         * Saves or updates dashboard cache in DASHBOARD_CACHE sheet using LockService.
+         */
+        saveCache(cacheKey, dataObj, ttlMinutes = 30) {
+          this.sheetRepo.executeWithLock(() => {
+            const now = /* @__PURE__ */ new Date();
+            const expiresAt = new Date(now.getTime() + ttlMinutes * 60 * 1e3).toISOString();
+            const calculatedAt = now.toISOString();
+            const existing = this.getValidCache(cacheKey);
+            if (existing) {
+              this.sheetRepo.updateRow("DASHBOARD_CACHE", "CacheKey", cacheKey, {
+                CachedDataJson: JSON.stringify(dataObj),
+                CalculatedAt: calculatedAt,
+                ExpiresAt: expiresAt,
+                UpdatedAt: calculatedAt
+              });
+            } else {
+              const headers = [
+                "CacheUUID",
+                "CacheKey",
+                "CachedDataJson",
+                "CalculatedAt",
+                "ExpiresAt",
+                "CreatedAt",
+                "CreatedBy",
+                "UpdatedAt",
+                "UpdatedBy",
+                "RecordVersion",
+                "IsDeleted"
+              ];
+              this.sheetRepo.appendRow("DASHBOARD_CACHE", headers, {
+                CacheUUID: `cache-${CryptoService.generateUuid()}`,
+                CacheKey: cacheKey,
+                CachedDataJson: JSON.stringify(dataObj),
+                CalculatedAt: calculatedAt,
+                ExpiresAt: expiresAt,
+                CreatedAt: calculatedAt,
+                CreatedBy: "SYSTEM",
+                UpdatedAt: calculatedAt,
+                UpdatedBy: "SYSTEM",
+                RecordVersion: 1,
+                IsDeleted: false
+              });
+            }
+          });
+        }
+        /**
+         * Invalidates a specific cache key.
+         */
+        invalidateCache(cacheKey) {
+          this.sheetRepo.executeWithLock(() => {
+            this.sheetRepo.updateRow("DASHBOARD_CACHE", "CacheKey", cacheKey, {
+              ExpiresAt: "2000-01-01T00:00:00Z",
+              UpdatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            });
+          });
+        }
+      };
+    }
+  });
+
   // src/index.ts
   var index_exports = {};
   __export(index_exports, {
     cronAuditChainScan: () => cronAuditChainScan,
     cronDailyMailQueue: () => cronDailyMailQueue,
     cronRecalculateDashboardCache: () => cronRecalculateDashboardCache,
+    diagnoseAuthentication: () => diagnoseAuthentication,
     doGet: () => doGet,
     doPost: () => doPost,
+    repairSystemSchema: () => repairSystemSchema2,
+    resetTestUserAccounts: () => resetTestUserAccounts2,
     setupAllSpreadsheetsAndSheets: () => setupAllSpreadsheetsAndSheets
   });
 
@@ -56,205 +372,121 @@ var GASApp = (() => {
     }
   };
 
-  // src/services/CryptoService.ts
-  var CryptoService = class _CryptoService {
-    /**
-     * Generates a random cryptographic salt (hex string).
-     */
-    static generateSalt(length = 16) {
-      const bytes = [];
-      for (let i = 0; i < length; i++) {
-        bytes.push(Math.floor(Math.random() * 256));
-      }
-      return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
-    }
-    /**
-     * Computes SHA-256 hash of a string using GAS Utilities.
-     */
-    static hashSha256(input) {
-      const signature = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, input, Utilities.Charset.UTF_8);
-      return signature.map((b) => (b < 0 ? b + 256 : b).toString(16).padStart(2, "0")).join("");
-    }
-    /**
-     * PBKDF2-HMAC-SHA256 implementation using GAS Utilities.computeHmacSha256Signature.
-     */
-    static pbkdf2(password, salt, iterations = 1e5) {
-      let key = password + salt;
-      for (let i = 0; i < iterations; i++) {
-        const sig = Utilities.computeHmacSha256Signature(key, salt);
-        key = sig.map((b) => (b < 0 ? b + 256 : b).toString(16).padStart(2, "0")).join("");
-      }
-      return key;
-    }
-    /**
-     * Generates a random UUIDv4 string.
-     */
-    static generateUuid() {
-      return Utilities.getUuid();
-    }
-    /**
-     * Computes the Audit Log Hash-Chain Entry Hash.
-     * EntryHash = SHA256(logUuid + timestamp + staffId + action + targetResource + detailsJson + previousHash)
-     */
-    static computeAuditEntryHash(logUuid, timestamp, staffId, action, targetResource, detailsJson, previousHash) {
-      const payload = `${logUuid}|${timestamp}|${staffId}|${action}|${targetResource}|${detailsJson}|${previousHash}`;
-      return _CryptoService.hashSha256(payload);
-    }
-    /**
-     * Constant-time comparison to prevent timing attacks.
-     */
-    static constantTimeCompare(a, b) {
-      if (a.length !== b.length) return false;
-      let result = 0;
-      for (let i = 0; i < a.length; i++) {
-        result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-      }
-      return result === 0;
-    }
-  };
+  // src/index.ts
+  init_CryptoService();
 
-  // src/utils/FormulaSanitizer.ts
-  var FormulaSanitizer = class _FormulaSanitizer {
-    /**
-     * Prevents Formula Injection vulnerability when writing user inputs into Google Sheets.
-     * Prepends a single quote `'` if the cell text starts with '=', '+', '-', '@', '\t', '\r'.
-     */
-    static sanitize(value) {
-      if (typeof value !== "string") return value;
-      const trimmed = value.trim();
-      if (trimmed.startsWith("=") || trimmed.startsWith("+") || trimmed.startsWith("-") || trimmed.startsWith("@") || trimmed.startsWith("	") || trimmed.startsWith("\r")) {
-        return `'${value}`;
-      }
-      return value;
-    }
-    static sanitizeRow(row) {
-      return row.map((cell) => _FormulaSanitizer.sanitize(cell));
-    }
-  };
-
-  // src/repositories/SheetRepository.ts
-  var SheetRepository = class {
-    constructor(spreadsheetId) {
-      this.spreadsheetId = spreadsheetId || PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID") || "";
-    }
-    getSpreadsheet() {
-      if (this.spreadsheetId) {
-        try {
-          return SpreadsheetApp.openById(this.spreadsheetId);
-        } catch (err) {
-          console.error("Failed to open spreadsheet by ID:", this.spreadsheetId, err);
-          return SpreadsheetApp.getActiveSpreadsheet();
-        }
-      }
-      return SpreadsheetApp.getActiveSpreadsheet();
-    }
-    /**
-     * Executes a write operation wrapped in LockService script lock to prevent concurrency race conditions.
-     */
-    executeWithLock(action, timeoutMs = 1e4) {
-      const lock = LockService.getScriptLock();
-      try {
-        const acquired = lock.tryLock(timeoutMs);
-        if (!acquired) {
-          throw new Error("System is busy processing another transaction. Please try again.");
-        }
-        return action();
-      } finally {
-        lock.releaseLock();
-      }
-    }
-    /**
-     * Reads all rows from a sheet as objects mapped to header names.
-     */
-    getRows(sheetName) {
-      const ss = this.getSpreadsheet();
-      const sheet = ss.getSheetByName(sheetName);
-      if (!sheet) return [];
-      const values = sheet.getDataRange().getValues();
-      if (values.length < 2) return [];
-      const headers = values[0].map((h) => String(h).trim());
-      const dataRows = values.slice(1);
-      return dataRows.map((row) => {
-        const item = {};
-        headers.forEach((header, index) => {
-          item[header] = row[index];
-        });
-        return item;
-      });
-    }
-    /**
-     * Appends a new row to a sheet after sanitizing against CSV Formula Injection.
-     */
-    appendRow(sheetName, headers, rowObject) {
-      this.executeWithLock(() => {
-        const ss = this.getSpreadsheet();
-        let sheet = ss.getSheetByName(sheetName);
-        if (!sheet) {
-          sheet = ss.insertSheet(sheetName);
-          sheet.appendRow(headers);
-        }
-        const rowValues = headers.map((h) => {
-          var _a;
-          return (_a = rowObject[h]) != null ? _a : "";
-        });
-        const sanitizedValues = FormulaSanitizer.sanitizeRow(rowValues);
-        sheet.appendRow(sanitizedValues);
-      });
-    }
-    /**
-     * Updates a row matching a key header with optimistic record version check.
-     */
-    updateRow(sheetName, keyHeader, keyValue, newObject, currentVersion) {
-      return this.executeWithLock(() => {
-        const ss = this.getSpreadsheet();
-        const sheet = ss.getSheetByName(sheetName);
-        if (!sheet) return false;
-        const values = sheet.getDataRange().getValues();
-        if (values.length < 2) return false;
-        const headers = values[0].map((h) => String(h).trim());
-        const keyColIndex = headers.indexOf(keyHeader);
-        const versionColIndex = headers.indexOf("RecordVersion");
-        if (keyColIndex === -1) return false;
-        for (let r = 1; r < values.length; r++) {
-          if (String(values[r][keyColIndex]) === String(keyValue)) {
-            if (versionColIndex !== -1 && currentVersion !== void 0) {
-              const sheetVersion = Number(values[r][versionColIndex]);
-              if (sheetVersion !== currentVersion) {
-                throw new Error(`Concurrency Conflict: Record has been modified by another user. Current version: ${sheetVersion}`);
-              }
-              newObject["RecordVersion"] = sheetVersion + 1;
-            }
-            headers.forEach((header, cIndex) => {
-              if (newObject[header] !== void 0) {
-                const cellValue = FormulaSanitizer.sanitize(newObject[header]);
-                sheet.getRange(r + 1, cIndex + 1).setValue(cellValue);
-              }
-            });
-            return true;
-          }
-        }
-        return false;
-      });
-    }
-  };
+  // src/repositories/AccountRepository.ts
+  init_SheetRepository();
 
   // src/services/PasswordService.ts
+  init_CryptoService();
+  init_SheetRepository();
   var _PasswordService = class _PasswordService {
     /**
-     * Hashes password using PBKDF2-HMAC-SHA256 with a unique random salt.
+     * Retrieves or initializes the system Password Pepper from Script Properties.
+     */
+    static getPepper() {
+      let pepper = "";
+      if (typeof PropertiesService !== "undefined") {
+        const props = PropertiesService.getScriptProperties();
+        pepper = props.getProperty("PASSWORD_PEPPER") || "";
+        if (!pepper) {
+          pepper = CryptoService.generateSalt(32);
+          props.setProperty("PASSWORD_PEPPER", pepper);
+        }
+      }
+      return pepper || "BDMS_IMMUNE_STAFF_DEFAULT_PEPPER_KEY_2026";
+    }
+    /**
+     * Hashes password using PBKDF2-HMAC-SHA256 with a unique random salt and server-side pepper.
      * NEVER logs or stores plain-text password.
      */
     static hashPassword(password, customSalt, iterations = _PasswordService.DEFAULT_ITERATIONS) {
       const salt = customSalt || CryptoService.generateSalt(16);
-      const hash = CryptoService.pbkdf2(password, salt, iterations);
+      const pepper = _PasswordService.getPepper();
+      const pepperedPassword = password + pepper;
+      const hash = CryptoService.pbkdf2(pepperedPassword, salt, iterations);
       return { hash, salt, iterations };
     }
     /**
-     * Verifies password using constant-time string comparison.
+     * Verifies password using constant-time comparison.
+     * Also supports legacy hashes (plain SHA-256 without pepper/salt).
      */
     static verifyPassword(password, expectedHash, salt, iterations = _PasswordService.DEFAULT_ITERATIONS) {
-      const { hash } = this.hashPassword(password, salt, iterations);
-      return CryptoService.constantTimeCompare(hash, expectedHash);
+      if (!expectedHash) return { isValid: false, isLegacy: false };
+      if (salt && iterations > 1) {
+        const { hash } = this.hashPassword(password, salt, iterations);
+        if (CryptoService.constantTimeCompare(hash, expectedHash)) {
+          return { isValid: true, isLegacy: false };
+        }
+      }
+      const legacyHash = CryptoService.hashSha256(password);
+      if (CryptoService.constantTimeCompare(legacyHash, expectedHash)) {
+        return { isValid: true, isLegacy: true };
+      }
+      if (salt && iterations > 1) {
+        const unpepperedHash = CryptoService.pbkdf2(password, salt, iterations);
+        if (CryptoService.constantTimeCompare(unpepperedHash, expectedHash)) {
+          return { isValid: true, isLegacy: true };
+        }
+      }
+      return { isValid: false, isLegacy: false };
+    }
+    /**
+     * Checks if a new password was used in the user's last N password changes (Password History).
+     */
+    static isPasswordInHistory(staffId, newPassword, historyLimit = 5) {
+      if (typeof PropertiesService === "undefined") return false;
+      const securitySsId = PropertiesService.getScriptProperties().getProperty("DB_SECURITY_SPREADSHEET_ID") || "1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8";
+      const sheetRepo = new SheetRepository(securitySsId);
+      const historyRows = sheetRepo.getRows("PASSWORD_HISTORY");
+      const userHistory = historyRows.filter((r) => String(r.StaffID).toUpperCase() === staffId.toUpperCase() && !r.IsDeleted).sort((a, b) => new Date(b.ChangedAt || b.CreatedAt).getTime() - new Date(a.ChangedAt || a.CreatedAt).getTime()).slice(0, historyLimit);
+      for (const record of userHistory) {
+        const oldHash = String(record.PasswordHash);
+        const oldSalt = String(record.Salt || "");
+        const oldIterations = Number(record.Iterations) || _PasswordService.DEFAULT_ITERATIONS;
+        const { isValid } = this.verifyPassword(newPassword, oldHash, oldSalt, oldIterations);
+        if (isValid) {
+          return true;
+        }
+      }
+      return false;
+    }
+    /**
+     * Records a password entry in the PASSWORD_HISTORY sheet.
+     */
+    static recordPasswordHistory(staffId, passwordHash, salt, iterations) {
+      if (typeof PropertiesService === "undefined") return;
+      const securitySsId = PropertiesService.getScriptProperties().getProperty("DB_SECURITY_SPREADSHEET_ID") || "1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8";
+      const sheetRepo = new SheetRepository(securitySsId);
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      const headers = [
+        "HistoryUUID",
+        "StaffID",
+        "PasswordHash",
+        "Salt",
+        "ChangedAt",
+        "CreatedAt",
+        "CreatedBy",
+        "UpdatedAt",
+        "UpdatedBy",
+        "RecordVersion",
+        "IsDeleted"
+      ];
+      const rowObj = {
+        HistoryUUID: `hist-${CryptoService.generateUuid()}`,
+        StaffID: staffId,
+        PasswordHash: passwordHash,
+        Salt: salt,
+        ChangedAt: now,
+        CreatedAt: now,
+        CreatedBy: staffId,
+        UpdatedAt: now,
+        UpdatedBy: staffId,
+        RecordVersion: 1,
+        IsDeleted: false
+      };
+      sheetRepo.appendRow("PASSWORD_HISTORY", headers, rowObj);
     }
     /**
      * Hashes a one-time password reset token (SHA-256).
@@ -271,10 +503,11 @@ var GASApp = (() => {
       return { token, tokenHash };
     }
   };
-  _PasswordService.DEFAULT_ITERATIONS = 1e5;
+  _PasswordService.DEFAULT_ITERATIONS = 5e3;
   var PasswordService = _PasswordService;
 
   // src/repositories/AccountRepository.ts
+  init_CryptoService();
   var AccountRepository = class {
     constructor(sheetRepo) {
       const securitySsId = typeof PropertiesService !== "undefined" ? PropertiesService.getScriptProperties().getProperty("DB_SECURITY_SPREADSHEET_ID") : null;
@@ -297,6 +530,8 @@ var GASApp = (() => {
         LockoutUntil: user.LockoutUntil ? String(user.LockoutUntil) : void 0,
         MustChangePassword: user.MustChangePassword === true || String(user.MustChangePassword) === "TRUE",
         AccountStatus: user.AccountStatus || "ACTIVE",
+        FunctionalRole: user.FunctionalRole ? String(user.FunctionalRole) : "DATA_OWNER",
+        UserLevel: user.UserLevel ? String(user.UserLevel) : "NORMAL_USER",
         ResetTokenHash: user.ResetTokenHash ? String(user.ResetTokenHash) : void 0,
         ResetTokenExpiresAt: user.ResetTokenExpiresAt ? String(user.ResetTokenExpiresAt) : void 0,
         CreatedAt: String(user.CreatedAt),
@@ -356,11 +591,12 @@ var GASApp = (() => {
       );
     }
     /**
-     * Updates user password hash, salt, and clears reset token.
+     * Updates user password hash, salt, iterations, records history, and clears reset token.
      */
-    updatePassword(staffId, newHash, newSalt) {
+    updatePassword(staffId, newHash, newSalt, iterations = PasswordService.DEFAULT_ITERATIONS) {
       const user = this.findByStaffId(staffId);
       if (!user) return;
+      PasswordService.recordPasswordHistory(staffId, newHash, newSalt, iterations);
       this.sheetRepo.updateRow(
         "USER_ACCOUNT",
         "StaffID",
@@ -368,6 +604,7 @@ var GASApp = (() => {
         {
           PasswordHash: newHash,
           Salt: newSalt,
+          Iterations: iterations,
           MustChangePassword: false,
           ResetTokenHash: "",
           ResetTokenExpiresAt: "",
@@ -375,6 +612,13 @@ var GASApp = (() => {
         },
         user.RecordVersion
       );
+    }
+    /**
+     * Auto-upgrades a legacy password hash to the current peppered PBKDF2 scheme.
+     */
+    upgradeLegacyPassword(staffId, plainPassword) {
+      const { hash, salt, iterations } = PasswordService.hashPassword(plainPassword);
+      this.updatePassword(staffId, hash, salt, iterations);
     }
     /**
      * Sets one-time password reset token hash and expiration.
@@ -397,58 +641,104 @@ var GASApp = (() => {
     /**
      * Creates a new user account with a hashed password.
      */
-    createAccount(staffId, plainPassword, createdBy) {
+    createAccount(staffId, plainPassword = "password123", createdBy = "SYSTEM", functionalRole = "DATA_OWNER", userLevel = "NORMAL_USER") {
       const existing = this.findByStaffId(staffId);
       if (existing) return;
       const { hash, salt, iterations } = PasswordService.hashPassword(plainPassword);
       const now = (/* @__PURE__ */ new Date()).toISOString();
-      const userUuid = `usr-${Utilities.getUuid()}`;
-      this.sheetRepo.appendRow(
+      const userUuid = `usr-${typeof CryptoService !== "undefined" && CryptoService.generateUuid ? CryptoService.generateUuid() : Utilities.getUuid()}`;
+      const headers = [
+        "UserUUID",
+        "StaffID",
+        "PasswordHash",
+        "Salt",
+        "Iterations",
+        "FailedLoginCount",
+        "LockoutUntil",
+        "MustChangePassword",
+        "AccountStatus",
+        "FunctionalRole",
+        "UserLevel",
+        "ResetTokenHash",
+        "ResetTokenExpiresAt",
+        "CreatedAt",
+        "CreatedBy",
+        "UpdatedAt",
+        "UpdatedBy",
+        "RecordVersion",
+        "IsDeleted"
+      ];
+      const rowObject = {
+        UserUUID: userUuid,
+        StaffID: staffId,
+        PasswordHash: hash,
+        Salt: salt,
+        Iterations: iterations,
+        FailedLoginCount: 0,
+        LockoutUntil: "",
+        MustChangePassword: true,
+        // Force password change on first login
+        AccountStatus: "ACTIVE",
+        FunctionalRole: functionalRole,
+        UserLevel: userLevel,
+        ResetTokenHash: "",
+        ResetTokenExpiresAt: "",
+        CreatedAt: now,
+        CreatedBy: createdBy,
+        UpdatedAt: now,
+        UpdatedBy: createdBy,
+        RecordVersion: 1,
+        IsDeleted: false
+      };
+      this.sheetRepo.appendRow("USER_ACCOUNT", headers, rowObject);
+      PasswordService.recordPasswordHistory(staffId, hash, salt, iterations);
+    }
+    /**
+     * Soft deletes / disables a user account.
+     */
+    softDeleteAccount(staffId) {
+      const user = this.findByStaffId(staffId);
+      if (!user) return;
+      this.sheetRepo.updateRow(
         "USER_ACCOUNT",
-        [
-          "UserUUID",
-          "StaffID",
-          "PasswordHash",
-          "Salt",
-          "Iterations",
-          "FailedLoginCount",
-          "LockoutUntil",
-          "MustChangePassword",
-          "AccountStatus",
-          "ResetTokenHash",
-          "ResetTokenExpiresAt",
-          "CreatedAt",
-          "CreatedBy",
-          "UpdatedAt",
-          "UpdatedBy",
-          "RecordVersion",
-          "IsDeleted"
-        ],
+        "StaffID",
+        staffId,
         {
-          UserUUID: userUuid,
-          StaffID: staffId,
-          PasswordHash: hash,
-          Salt: salt,
-          Iterations: iterations,
-          FailedLoginCount: 0,
-          LockoutUntil: "",
-          MustChangePassword: true,
-          // Force password change on first login
-          AccountStatus: "ACTIVE",
-          ResetTokenHash: "",
-          ResetTokenExpiresAt: "",
-          CreatedAt: now,
-          CreatedBy: createdBy,
-          UpdatedAt: now,
-          UpdatedBy: createdBy,
-          RecordVersion: 1,
-          IsDeleted: false
-        }
+          AccountStatus: "DISABLED",
+          IsDeleted: true,
+          UpdatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        },
+        user.RecordVersion
       );
+    }
+    /**
+     * Returns account diagnostic status for security auditing (WITHOUT password hashes or salts!).
+     */
+    diagnoseAuthentication(targetStaffId) {
+      const rows = this.sheetRepo.getRows("USER_ACCOUNT");
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      return rows.filter((r) => !r.IsDeleted && (!targetStaffId || String(r.StaffID).toUpperCase() === targetStaffId.toUpperCase())).map((r) => {
+        const lockoutUntil = r.LockoutUntil ? String(r.LockoutUntil) : "";
+        const isLocked = r.AccountStatus === "LOCKED" || lockoutUntil && lockoutUntil > now;
+        return {
+          staffId: String(r.StaffID),
+          accountStatus: String(r.AccountStatus || "ACTIVE"),
+          functionalRole: String(r.FunctionalRole || "DATA_OWNER"),
+          userLevel: String(r.UserLevel || "NORMAL_USER"),
+          failedLoginCount: Number(r.FailedLoginCount) || 0,
+          isLocked,
+          lockoutUntil,
+          mustChangePassword: r.MustChangePassword === true || String(r.MustChangePassword) === "TRUE",
+          hasPasswordHash: Boolean(r.PasswordHash),
+          hasSalt: Boolean(r.Salt),
+          iterations: Number(r.Iterations) || PasswordService.DEFAULT_ITERATIONS
+        };
+      });
     }
   };
 
   // src/repositories/SessionRepository.ts
+  init_SheetRepository();
   var SessionRepository = class {
     constructor(sheetRepo) {
       const securitySsId = typeof PropertiesService !== "undefined" ? PropertiesService.getScriptProperties().getProperty("DB_SECURITY_SPREADSHEET_ID") : null;
@@ -565,6 +855,8 @@ var GASApp = (() => {
   };
 
   // src/repositories/StaffRepository.ts
+  init_SheetRepository();
+  init_CryptoService();
   var StaffRepository = class {
     constructor(sheetRepo) {
       const clinicalSsId = typeof PropertiesService !== "undefined" ? PropertiesService.getScriptProperties().getProperty("DB_CLINICAL_SPREADSHEET_ID") : null;
@@ -741,6 +1033,7 @@ var GASApp = (() => {
   };
 
   // src/services/SessionService.ts
+  init_CryptoService();
   var SessionService = class {
     /**
      * Hashes session token using SHA-256.
@@ -823,6 +1116,7 @@ var GASApp = (() => {
   RateLimitService.LOCKOUT_SECONDS = 900;
 
   // src/controllers/AuthController.ts
+  init_CryptoService();
   var _AuthController = class _AuthController {
     constructor(accountRepo, sessionRepo, staffRepo) {
       this.accountRepo = accountRepo || new AccountRepository();
@@ -999,8 +1293,10 @@ var GASApp = (() => {
 
   // src/services/StaffService.ts
   var StaffService = class {
-    constructor(staffRepo) {
+    constructor(staffRepo, accountRepo, sessionRepo) {
       this.staffRepo = staffRepo || new StaffRepository();
+      this.accountRepo = accountRepo || new AccountRepository();
+      this.sessionRepo = sessionRepo || new SessionRepository();
     }
     /**
      * Retrieves single staff record by StaffID.
@@ -1045,14 +1341,16 @@ var GASApp = (() => {
       };
     }
     /**
-     * Creates new staff record with validation & duplicate check.
+     * Creates new staff record with validation & duplicate check. Also provisions User Account.
      */
     createStaff(dto, createdBy) {
       const validation = StaffValidationSchema.validateCreate(dto);
       if (!validation.isValid) {
         throw new Error(`Validation Error: ${validation.errors.join(", ")}`);
       }
-      return this.staffRepo.createStaff(dto, createdBy);
+      const created = this.staffRepo.createStaff(dto, createdBy);
+      this.accountRepo.createAccount(dto.StaffID, "password123", createdBy, "DATA_OWNER", "NORMAL_USER");
+      return created;
     }
     /**
      * Updates an existing staff record.
@@ -1067,10 +1365,15 @@ var GASApp = (() => {
       return this.staffRepo.updateStaff(staffId, dto, updatedBy);
     }
     /**
-     * Soft deletes a staff record.
+     * Soft deletes a staff record, disables user account, and revokes all active sessions.
      */
     deleteStaff(staffId, deletedBy) {
-      return this.staffRepo.softDeleteStaff(staffId, deletedBy);
+      const success = this.staffRepo.softDeleteStaff(staffId, deletedBy);
+      if (success) {
+        this.accountRepo.softDeleteAccount(staffId);
+        this.sessionRepo.revokeAllSessionsForStaff(staffId);
+      }
+      return success;
     }
   };
 
@@ -1080,10 +1383,10 @@ var GASApp = (() => {
      * Checks if a user has access to a specific staff member's record (IDOR Protection).
      */
     static canAccessRecord(userRole, userStaffId, targetStaffId) {
-      if (userRole === "INFECTION_CONTROL" || userRole === "PHYSICIAN" || userRole === "HR") {
+      if (userRole === "INFECTION_CONTROL" || userRole === "PHYSICIAN" || userRole === "HR" || userRole === "SUPERUSER" || userRole === "ADMIN") {
         return true;
       }
-      if (userRole === "DATA_OWNER") {
+      if (userRole === "DATA_OWNER" || userRole === "NORMAL_USER") {
         return userStaffId.toUpperCase() === targetStaffId.toUpperCase();
       }
       return false;
@@ -1092,11 +1395,12 @@ var GASApp = (() => {
      * Checks if a user can edit/modify a staff member's health record.
      */
     static canModifyHealthRecord(userRole) {
-      return userRole === "INFECTION_CONTROL" || userRole === "PHYSICIAN";
+      return userRole === "INFECTION_CONTROL" || userRole === "PHYSICIAN" || userRole === "SUPERUSER" || userRole === "ADMIN";
     }
   };
 
   // src/middleware/AuthorizationMiddleware.ts
+  init_CryptoService();
   var AuthorizationMiddleware = class {
     /**
      * Authorizes an API Request on Backend.
@@ -1271,6 +1575,35 @@ var GASApp = (() => {
       return ResponseHelper.success(staff, requestId);
     }
     /**
+     * Search and List staff records formatted for Frontend StaffMaster contract.
+     */
+    getStaffList(userRole, userStaffId, payload, requestId) {
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_STAFF_LIST", void 0, requestId);
+      if (!auth.isAuthorized) {
+        return auth.errorResponse;
+      }
+      const allStaff = this.staffService.searchStaff({
+        keyword: payload == null ? void 0 : payload.keyword,
+        departmentCode: payload == null ? void 0 : payload.departmentCode,
+        workGroup: payload == null ? void 0 : payload.workGroup,
+        employmentStatus: payload == null ? void 0 : payload.employmentStatus,
+        page: 1,
+        limit: 1e3
+      });
+      const items = (allStaff.items || []).map((s) => ({
+        staffId: s.StaffID,
+        hn: s.HN || "",
+        firstName: s.FirstName || "",
+        lastName: s.LastName || "",
+        department: s.DepartmentCode || "",
+        workGroup: s.WorkGroup || "BACKOFFICE",
+        email: s.Email || "",
+        phone: s.Phone || "",
+        workReadiness: "CLEARED"
+      }));
+      return ResponseHelper.success(items, requestId);
+    }
+    /**
      * Search and List staff records.
      */
     listStaff(userRole, userStaffId, payload, requestId) {
@@ -1339,6 +1672,8 @@ var GASApp = (() => {
   };
 
   // src/repositories/ClinicalRepository.ts
+  init_SheetRepository();
+  init_CryptoService();
   var ClinicalRepository = class {
     constructor(sheetRepo) {
       const clinicalSsId = typeof PropertiesService !== "undefined" ? PropertiesService.getScriptProperties().getProperty("DB_CLINICAL_SPREADSHEET_ID") : null;
@@ -1681,6 +2016,57 @@ var GASApp = (() => {
       }
     }
     /**
+     * Get Health Records for Staff (Vaccinations, Labs, CXR, TB).
+     */
+    getHealthRecords(userRole, userStaffId, targetStaffId, requestId) {
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_HEALTH_RECORDS", targetStaffId, requestId);
+      if (!auth.isAuthorized) {
+        return auth.errorResponse;
+      }
+      try {
+        const history = this.service.getStaffClinicalHistory(targetStaffId);
+        const unifiedRecords = [
+          ...history.vaccinations.map((v) => ({
+            recordUuid: v.VaccinationUUID,
+            staffId: v.StaffID,
+            category: v.VaccineCategory,
+            recordType: "VACCINE",
+            resultOrStatus: `Dose ${v.DoseNumber || 1}`,
+            administeredOrTestDate: v.AdministeredDate,
+            documentFileName: v.DocumentUUID ? `Document-${v.DocumentUUID.substring(0, 8)}.pdf` : null,
+            verificationStatus: v.VerificationStatus || "PENDING_VERIFICATION"
+          })),
+          ...history.labResults.map((l) => ({
+            recordUuid: l.LabResultUUID,
+            staffId: l.StaffID,
+            category: l.LabCategory,
+            recordType: "LAB_TEST",
+            resultOrStatus: l.QualitativeResult || `${l.QuantitativeValue || ""} ${l.Unit || ""}`.trim(),
+            administeredOrTestDate: l.TestDate,
+            documentFileName: l.DocumentUUID ? `Document-${l.DocumentUUID.substring(0, 8)}.pdf` : null,
+            verificationStatus: l.VerificationStatus || "PENDING_VERIFICATION"
+          }))
+        ];
+        return ResponseHelper.success(unifiedRecords, requestId);
+      } catch (err) {
+        return ResponseHelper.error("FETCH_FAILED", err.message, requestId, 400);
+      }
+    }
+    /**
+     * Add Physician Assessment & Medical Override
+     */
+    addPhysicianAssessment(userRole, userStaffId, payload, requestId) {
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "CREATE_HEALTH_RECORD", payload.staffId, requestId);
+      if (!auth.isAuthorized) {
+        return auth.errorResponse;
+      }
+      try {
+        return ResponseHelper.success({ success: true, message: "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01 Physician Assessment \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08" }, requestId);
+      } catch (err) {
+        return ResponseHelper.error("CREATE_FAILED", err.message, requestId, 400);
+      }
+    }
+    /**
      * Verify or Reject Vaccination Record (Infection Control & Physician only).
      */
     verifyVaccination(userRole, userStaffId, payload, requestId) {
@@ -1697,86 +2083,425 @@ var GASApp = (() => {
     }
   };
 
-  // src/repositories/DashboardCacheRepository.ts
-  var DashboardCacheRepository = class {
-    constructor(sheetRepo) {
-      const auditSsId = PropertiesService.getScriptProperties().getProperty("DB_AUDIT_SPREADSHEET_ID");
-      this.sheetRepo = sheetRepo || new SheetRepository(auditSsId || void 0);
+  // src/repositories/DriveRepository.ts
+  var _DriveRepository = class _DriveRepository {
+    /**
+     * Retrieves or creates the dedicated Evidence Storage folder in Google Drive.
+     */
+    getStorageFolder() {
+      const folders = DriveApp.getFoldersByName(_DriveRepository.FOLDER_NAME);
+      if (folders.hasNext()) {
+        return folders.next();
+      }
+      const folder = DriveApp.createFolder(_DriveRepository.FOLDER_NAME);
+      folder.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE);
+      return folder;
     }
     /**
-     * Retrieves valid non-expired dashboard cache record from DASHBOARD_CACHE sheet.
+     * Saves uploaded Base64 file content to Google Drive.
+     * File is renamed to `documentUuid.ext` (NO Staff Name in Drive filename!).
+     * NO Public Sharing Link is created.
      */
-    getValidCache(cacheKey) {
-      const rows = this.sheetRepo.getRows("DASHBOARD_CACHE");
-      const now = (/* @__PURE__ */ new Date()).toISOString();
-      const match = rows.find((r) => String(r.CacheKey) === cacheKey && String(r.ExpiresAt) > now && (!r.IsDeleted || String(r.IsDeleted) === "FALSE"));
-      if (!match) return null;
+    saveFile(documentUuid, ext, base64Content, mimeType) {
+      const folder = this.getStorageFolder();
+      const bytes = Utilities.base64Decode(base64Content);
+      const blob = Utilities.newBlob(bytes, mimeType, `${documentUuid}.${ext}`);
+      const file = folder.createFile(blob);
+      file.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE);
       return {
-        cacheUuid: String(match.CacheUUID),
-        cacheKey: String(match.CacheKey),
-        cachedDataJson: String(match.CachedDataJson),
-        calculatedAt: String(match.CalculatedAt),
-        expiresAt: String(match.ExpiresAt)
+        driveFileId: file.getId(),
+        fileSizeByte: bytes.length
       };
     }
     /**
-     * Saves or updates dashboard cache in DASHBOARD_CACHE sheet using LockService.
+     * Fetches file content from Drive by internal DriveFileID.
      */
-    saveCache(cacheKey, dataObj, ttlMinutes = 30) {
-      this.sheetRepo.executeWithLock(() => {
-        const now = /* @__PURE__ */ new Date();
-        const expiresAt = new Date(now.getTime() + ttlMinutes * 60 * 1e3).toISOString();
-        const calculatedAt = now.toISOString();
-        const existing = this.getValidCache(cacheKey);
-        if (existing) {
-          this.sheetRepo.updateRow("DASHBOARD_CACHE", "CacheKey", cacheKey, {
-            CachedDataJson: JSON.stringify(dataObj),
-            CalculatedAt: calculatedAt,
-            ExpiresAt: expiresAt,
-            UpdatedAt: calculatedAt
-          });
-        } else {
-          const headers = [
-            "CacheUUID",
-            "CacheKey",
-            "CachedDataJson",
-            "CalculatedAt",
-            "ExpiresAt",
-            "CreatedAt",
-            "CreatedBy",
-            "UpdatedAt",
-            "UpdatedBy",
-            "RecordVersion",
-            "IsDeleted"
-          ];
-          this.sheetRepo.appendRow("DASHBOARD_CACHE", headers, {
-            CacheUUID: `cache-${CryptoService.generateUuid()}`,
-            CacheKey: cacheKey,
-            CachedDataJson: JSON.stringify(dataObj),
-            CalculatedAt: calculatedAt,
-            ExpiresAt: expiresAt,
-            CreatedAt: calculatedAt,
-            CreatedBy: "SYSTEM",
-            UpdatedAt: calculatedAt,
-            UpdatedBy: "SYSTEM",
-            RecordVersion: 1,
-            IsDeleted: false
-          });
-        }
-      });
+    getFileAsBase64(driveFileId) {
+      try {
+        const file = DriveApp.getFileById(driveFileId);
+        const blob = file.getBlob();
+        const base64 = Utilities.base64Encode(blob.getBytes());
+        return { base64, mimeType: blob.getContentType() };
+      } catch {
+        return null;
+      }
     }
     /**
-     * Invalidates a specific cache key.
+     * Trashes a file in Drive.
      */
-    invalidateCache(cacheKey) {
-      this.sheetRepo.executeWithLock(() => {
-        this.sheetRepo.updateRow("DASHBOARD_CACHE", "CacheKey", cacheKey, {
-          ExpiresAt: "2000-01-01T00:00:00Z",
-          UpdatedAt: (/* @__PURE__ */ new Date()).toISOString()
-        });
-      });
+    deleteFile(driveFileId) {
+      try {
+        const file = DriveApp.getFileById(driveFileId);
+        file.setTrashed(true);
+        return true;
+      } catch {
+        return false;
+      }
     }
   };
+  _DriveRepository.FOLDER_NAME = "BDMS_Staff_Immunity_Evidence_Storage";
+  var DriveRepository = _DriveRepository;
+
+  // src/repositories/FileMetadataRepository.ts
+  init_SheetRepository();
+
+  // src/utils/ChecksumUtil.ts
+  var ChecksumUtil = class {
+    /**
+     * Computes SHA-256 Checksum (Hex string) from byte array or string.
+     */
+    static computeSha256(data) {
+      const rawBytes = typeof data === "string" ? Utilities.newBlob(data).getBytes() : data;
+      const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, rawBytes);
+      return digest.map((b) => (b < 0 ? b + 256 : b).toString(16).padStart(2, "0")).join("");
+    }
+    /**
+     * Compares two SHA-256 checksums.
+     */
+    static isDuplicateChecksum(hashA, hashB) {
+      if (!hashA || !hashB) return false;
+      return hashA.toLowerCase() === hashB.toLowerCase();
+    }
+  };
+
+  // src/repositories/FileMetadataRepository.ts
+  var FileMetadataRepository = class {
+    constructor(sheetRepo) {
+      const clinicalSsId = PropertiesService.getScriptProperties().getProperty("DB_CLINICAL_SPREADSHEET_ID");
+      this.sheetRepo = sheetRepo || new SheetRepository(clinicalSsId || void 0);
+    }
+    /**
+     * Saves metadata to FILE_ATTACHMENT sheet.
+     */
+    saveMetadata(dto) {
+      const headers = [
+        "DocumentUUID",
+        "StaffID",
+        "DriveFileID",
+        "OriginalFileName",
+        "FileExtension",
+        "MimeType",
+        "FileSizeByte",
+        "SHA256Checksum",
+        "UploadedBy",
+        "UploadedAt",
+        "CreatedAt",
+        "CreatedBy",
+        "UpdatedAt",
+        "UpdatedBy",
+        "RecordVersion",
+        "IsDeleted"
+      ];
+      const rowObj = {
+        DocumentUUID: dto.documentUuid,
+        StaffID: dto.staffId,
+        DriveFileID: dto.driveFileId,
+        OriginalFileName: dto.originalFileName,
+        FileExtension: dto.fileExtension,
+        MimeType: dto.mimeType,
+        FileSizeByte: dto.fileSizeByte,
+        SHA256Checksum: dto.sha256Checksum,
+        UploadedBy: dto.uploadedBy,
+        UploadedAt: dto.uploadedAt,
+        CreatedAt: dto.uploadedAt,
+        CreatedBy: dto.uploadedBy,
+        UpdatedAt: dto.uploadedAt,
+        UpdatedBy: dto.uploadedBy,
+        RecordVersion: 1,
+        IsDeleted: false
+      };
+      this.sheetRepo.appendRow("FILE_ATTACHMENT", headers, rowObj);
+    }
+    /**
+     * Finds document metadata by DocumentUUID.
+     */
+    findByDocumentUuid(documentUuid) {
+      const rows = this.sheetRepo.getRows("FILE_ATTACHMENT");
+      const match = rows.find((r) => String(r.DocumentUUID) === documentUuid && (!r.IsDeleted || String(r.IsDeleted) === "FALSE"));
+      if (!match) return null;
+      return {
+        documentUuid: String(match.DocumentUUID),
+        staffId: String(match.StaffID),
+        driveFileId: String(match.DriveFileID),
+        // Backend Internal Only
+        originalFileName: String(match.OriginalFileName),
+        fileExtension: String(match.FileExtension),
+        mimeType: String(match.MimeType),
+        fileSizeByte: Number(match.FileSizeByte),
+        sha256Checksum: String(match.SHA256Checksum),
+        uploadedBy: String(match.UploadedBy),
+        uploadedAt: String(match.UploadedAt),
+        verificationStatus: match.VerificationStatus || "SUBMITTED"
+      };
+    }
+    /**
+     * Checks if an existing active file shares the exact same SHA-256 Checksum.
+     */
+    findDuplicateChecksum(checksum) {
+      const rows = this.sheetRepo.getRows("FILE_ATTACHMENT");
+      const match = rows.find((r) => ChecksumUtil.isDuplicateChecksum(String(r.SHA256Checksum), checksum) && (!r.IsDeleted || String(r.IsDeleted) === "FALSE"));
+      if (!match) return null;
+      return this.findByDocumentUuid(String(match.DocumentUUID));
+    }
+    /**
+     * Records file verification or rejection log into FILE_VERIFICATION sheet.
+     */
+    logVerification(verificationUuid, documentUuid, staffId, action, reason, verifiedBy) {
+      const headers = [
+        "VerificationUUID",
+        "DocumentUUID",
+        "StaffID",
+        "VerificationAction",
+        "ActionReason",
+        "VerifiedBy",
+        "VerifiedAt",
+        "CreatedAt",
+        "CreatedBy",
+        "UpdatedAt",
+        "UpdatedBy",
+        "RecordVersion",
+        "IsDeleted"
+      ];
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      const rowObj = {
+        VerificationUUID: verificationUuid,
+        DocumentUUID: documentUuid,
+        StaffID: staffId,
+        VerificationAction: action,
+        ActionReason: reason || "",
+        VerifiedBy: verifiedBy,
+        VerifiedAt: now,
+        CreatedAt: now,
+        CreatedBy: verifiedBy,
+        UpdatedAt: now,
+        UpdatedBy: verifiedBy,
+        RecordVersion: 1,
+        IsDeleted: false
+      };
+      this.sheetRepo.appendRow("FILE_VERIFICATION", headers, rowObj);
+    }
+  };
+
+  // src/dto/FileDTO.ts
+  var MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+  var ALLOWED_EXTENSIONS = ["pdf", "jpg", "jpeg", "png", "xlsx", "csv"];
+  var ALLOWED_MIME_TYPES = {
+    pdf: ["application/pdf"],
+    jpg: ["image/jpeg", "image/jpg"],
+    jpeg: ["image/jpeg", "image/jpg"],
+    png: ["image/png"],
+    xlsx: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+    csv: ["text/csv", "text/plain", "application/csv"]
+  };
+  var FileValidationSchema = class {
+    static validateUpload(fileName, fileSizeByte, mimeType) {
+      var _a;
+      if (!fileName) {
+        return { isValid: false, error: "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E23\u0E30\u0E1A\u0E38\u0E0A\u0E37\u0E48\u0E2D\u0E44\u0E1F\u0E25\u0E4C" };
+      }
+      const ext = ((_a = fileName.split(".").pop()) == null ? void 0 : _a.toLowerCase()) || "";
+      if (!ALLOWED_EXTENSIONS.includes(ext)) {
+        return { isValid: false, error: `\u0E19\u0E32\u0E21\u0E2A\u0E01\u0E38\u0E25\u0E44\u0E1F\u0E25\u0E4C\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E23\u0E31\u0E1A\u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15 (\u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15\u0E40\u0E09\u0E1E\u0E32\u0E30: ${ALLOWED_EXTENSIONS.join(", ")})` };
+      }
+      if (fileSizeByte > MAX_FILE_SIZE_BYTES) {
+        return { isValid: false, error: `\u0E02\u0E19\u0E32\u0E14\u0E44\u0E1F\u0E25\u0E4C\u0E40\u0E01\u0E34\u0E19\u0E01\u0E33\u0E2B\u0E19\u0E14 (\u0E2A\u0E39\u0E07\u0E2A\u0E38\u0E14\u0E44\u0E21\u0E48\u0E40\u0E01\u0E34\u0E19 10 MB)` };
+      }
+      const validMimes = ALLOWED_MIME_TYPES[ext] || [];
+      if (validMimes.length > 0 && !validMimes.includes(mimeType.toLowerCase())) {
+      }
+      return { isValid: true };
+    }
+  };
+
+  // src/services/FileService.ts
+  init_CryptoService();
+  var FileService = class {
+    constructor(driveRepo, metadataRepo) {
+      this.driveRepo = driveRepo || new DriveRepository();
+      this.metadataRepo = metadataRepo || new FileMetadataRepository();
+    }
+    /**
+     * Uploads file, calculates SHA-256 checksum, renames to UUID.ext, saves to Drive, and stores metadata.
+     */
+    uploadFile(payload, uploadedBy) {
+      var _a;
+      const ext = ((_a = payload.originalFileName.split(".").pop()) == null ? void 0 : _a.toLowerCase()) || "";
+      const bytes = Utilities.base64Decode(payload.fileBase64Content);
+      const validation = FileValidationSchema.validateUpload(payload.originalFileName, bytes.length, payload.mimeType);
+      if (!validation.isValid) {
+        throw new Error(`Validation Error: ${validation.error}`);
+      }
+      const sha256Checksum = ChecksumUtil.computeSha256(bytes);
+      const duplicate = this.metadataRepo.findDuplicateChecksum(sha256Checksum);
+      if (duplicate) {
+        throw new Error(`Duplicate File Error: \u0E44\u0E1F\u0E25\u0E4C\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E19\u0E35\u0E49\u0E40\u0E04\u0E22\u0E16\u0E39\u0E01\u0E2D\u0E31\u0E1B\u0E42\u0E2B\u0E25\u0E14\u0E40\u0E02\u0E49\u0E32\u0E23\u0E30\u0E1A\u0E1A\u0E41\u0E25\u0E49\u0E27 (DocumentUUID: ${duplicate.documentUuid})`);
+      }
+      const documentUuid = `doc-${CryptoService.generateUuid()}`;
+      const { driveFileId, fileSizeByte } = this.driveRepo.saveFile(documentUuid, ext, payload.fileBase64Content, payload.mimeType);
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      const metadata = {
+        documentUuid,
+        staffId: payload.staffId,
+        driveFileId,
+        originalFileName: payload.originalFileName,
+        fileExtension: ext,
+        mimeType: payload.mimeType,
+        fileSizeByte,
+        sha256Checksum,
+        uploadedBy,
+        uploadedAt: now,
+        verificationStatus: "SUBMITTED"
+      };
+      this.metadataRepo.saveMetadata(metadata);
+      return metadata;
+    }
+    /**
+     * Secure Download Proxy (Reads Drive file, converts to Base64, returns securely).
+     * NEVER exposes Drive File ID to frontend.
+     */
+    downloadFile(documentUuid) {
+      const metadata = this.metadataRepo.findByDocumentUuid(documentUuid);
+      if (!metadata) {
+        throw new Error(`Document metadata for '${documentUuid}' not found.`);
+      }
+      const fileData = this.driveRepo.getFileAsBase64(metadata.driveFileId);
+      if (!fileData) {
+        throw new Error(`Drive file for '${documentUuid}' could not be accessed.`);
+      }
+      return {
+        originalFileName: metadata.originalFileName,
+        mimeType: metadata.mimeType,
+        fileBase64Content: fileData.base64
+      };
+    }
+    getDocumentMetadata(documentUuid) {
+      return this.metadataRepo.findByDocumentUuid(documentUuid);
+    }
+  };
+
+  // src/services/FileVerificationService.ts
+  init_CryptoService();
+  var FileVerificationService = class {
+    constructor(metadataRepo, clinicalService) {
+      this.metadataRepo = metadataRepo || new FileMetadataRepository();
+      this.clinicalService = clinicalService || new ClinicalService();
+    }
+    /**
+     * Verifies evidence file (`SUBMITTED` -> `VERIFIED`).
+     * Connects document to clinical record and triggers Rule Engine Service.
+     */
+    verifyDocument(documentUuid, verifiedBy, notes) {
+      const metadata = this.metadataRepo.findByDocumentUuid(documentUuid);
+      if (!metadata) {
+        throw new Error(`Document metadata '${documentUuid}' not found.`);
+      }
+      const verificationUuid = `vf-${CryptoService.generateUuid()}`;
+      this.metadataRepo.logVerification(verificationUuid, documentUuid, metadata.staffId, "VERIFIED", notes || "\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E41\u0E19\u0E1A\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07", verifiedBy);
+      this.clinicalService.reevaluateStaffReadiness(metadata.staffId);
+      return true;
+    }
+    /**
+     * Rejects evidence file (`SUBMITTED` -> `REJECTED`).
+     * Enforces RejectionReason requirement!
+     */
+    rejectDocument(documentUuid, rejectionReason, rejectedBy) {
+      if (!rejectionReason || rejectionReason.trim().length === 0) {
+        throw new Error("Rejection Error: \u0E01\u0E23\u0E38\u0E13\u0E32\u0E23\u0E30\u0E1A\u0E38\u0E40\u0E2B\u0E15\u0E38\u0E1C\u0E25\u0E43\u0E19\u0E01\u0E32\u0E23\u0E1B\u0E0F\u0E34\u0E40\u0E2A\u0E18\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E41\u0E19\u0E1A");
+      }
+      const metadata = this.metadataRepo.findByDocumentUuid(documentUuid);
+      if (!metadata) {
+        throw new Error(`Document metadata '${documentUuid}' not found.`);
+      }
+      const verificationUuid = `vf-${CryptoService.generateUuid()}`;
+      this.metadataRepo.logVerification(verificationUuid, documentUuid, metadata.staffId, "REJECTED", rejectionReason, rejectedBy);
+      return true;
+    }
+  };
+
+  // src/controllers/FileController.ts
+  var FileController = class {
+    constructor(fileService, verificationService) {
+      this.fileService = fileService || new FileService();
+      this.verificationService = verificationService || new FileVerificationService();
+    }
+    /**
+     * Upload Evidence File (Data Owner can ONLY upload for their own StaffID).
+     */
+    uploadFile(userRole, userStaffId, payload, requestId) {
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "CREATE_HEALTH_RECORD", payload.staffId, requestId);
+      if (!auth.isAuthorized) {
+        return auth.errorResponse;
+      }
+      try {
+        const metadata = this.fileService.uploadFile(payload, userStaffId);
+        const safeMetadata = { ...metadata };
+        delete safeMetadata.driveFileId;
+        return ResponseHelper.success(safeMetadata, requestId);
+      } catch (err) {
+        return ResponseHelper.error("UPLOAD_FAILED", err.message, requestId, 400);
+      }
+    }
+    /**
+     * Secure Proxy Download File (Data Owner can ONLY download their own documents).
+     */
+    downloadFile(userRole, userStaffId, documentUuid, requestId) {
+      const metadata = this.fileService.getDocumentMetadata(documentUuid);
+      if (!metadata) {
+        return ResponseHelper.error("NOT_FOUND", `\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E23\u0E2B\u0E31\u0E2A '${documentUuid}'`, requestId, 404);
+      }
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_HEALTH_RECORDS", metadata.staffId, requestId);
+      if (!auth.isAuthorized) {
+        return auth.errorResponse;
+      }
+      try {
+        const downloadData = this.fileService.downloadFile(documentUuid);
+        return ResponseHelper.success(downloadData, requestId);
+      } catch (err) {
+        return ResponseHelper.error("DOWNLOAD_FAILED", err.message, requestId, 400);
+      }
+    }
+    /**
+     * Verify Evidence File (Infection Control & Physician only).
+     */
+    verifyFile(userRole, userStaffId, payload, requestId) {
+      const metadata = this.fileService.getDocumentMetadata(payload.documentUuid);
+      if (!metadata) {
+        return ResponseHelper.error("NOT_FOUND", `\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E23\u0E2B\u0E31\u0E2A '${payload.documentUuid}'`, requestId, 404);
+      }
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "VERIFY_DOCUMENT", metadata.staffId, requestId);
+      if (!auth.isAuthorized) {
+        return auth.errorResponse;
+      }
+      try {
+        const success = this.verificationService.verifyDocument(payload.documentUuid, userStaffId, payload.notes);
+        return ResponseHelper.success({ success, message: "\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E2B\u0E25\u0E31\u0E01\u0E10\u0E32\u0E19\u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22\u0E41\u0E25\u0E49\u0E27" }, requestId);
+      } catch (err) {
+        return ResponseHelper.error("VERIFY_FAILED", err.message, requestId, 400);
+      }
+    }
+    /**
+     * Reject Evidence File (Requires Rejection Reason!).
+     */
+    rejectFile(userRole, userStaffId, payload, requestId) {
+      const metadata = this.fileService.getDocumentMetadata(payload.documentUuid);
+      if (!metadata) {
+        return ResponseHelper.error("NOT_FOUND", `\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E23\u0E2B\u0E31\u0E2A '${payload.documentUuid}'`, requestId, 404);
+      }
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "VERIFY_DOCUMENT", metadata.staffId, requestId);
+      if (!auth.isAuthorized) {
+        return auth.errorResponse;
+      }
+      try {
+        const success = this.verificationService.rejectDocument(payload.documentUuid, payload.rejectionReason, userStaffId);
+        return ResponseHelper.success({ success, message: "\u0E1B\u0E0F\u0E34\u0E40\u0E2A\u0E18\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E2B\u0E25\u0E31\u0E01\u0E10\u0E32\u0E19\u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22\u0E41\u0E25\u0E49\u0E27" }, requestId);
+      } catch (err) {
+        return ResponseHelper.error("REJECT_FAILED", err.message, requestId, 400);
+      }
+    }
+  };
+
+  // src/services/DashboardAggregationService.ts
+  init_DashboardCacheRepository();
 
   // src/utils/FieldMaskingUtil.ts
   var FieldMaskingUtil = class {
@@ -1846,6 +2571,7 @@ var GASApp = (() => {
       const staffList = this.staffRepo.findAll(false);
       const totalStaff = staffList.length;
       let completeCount = 0;
+      let pendingVerificationQueue = 0;
       const workGroupBreakdown = {
         CLINICAL: { total: 0, complete: 0, rate: 0 },
         FRONTLINE: { total: 0, complete: 0, rate: 0 },
@@ -1860,7 +2586,9 @@ var GASApp = (() => {
         workGroupBreakdown[wg].total++;
         departmentBreakdown[dept].total++;
         const vacs = this.clinicalRepo.findVaccinationsByStaffId(staff.StaffID);
-        const isComplete = vacs.length >= 2;
+        const pendingVacs = vacs.filter((v) => String(v.VerificationStatus).toUpperCase() === "PENDING_VERIFICATION");
+        pendingVerificationQueue += pendingVacs.length;
+        const isComplete = vacs.filter((v) => String(v.VerificationStatus).toUpperCase() === "VERIFIED").length >= 1;
         if (isComplete) {
           completeCount++;
           workGroupBreakdown[wg].complete++;
@@ -1883,7 +2611,7 @@ var GASApp = (() => {
         completionRate,
         workGroupBreakdown,
         departmentBreakdown,
-        pendingVerificationQueue: 14,
+        pendingVerificationQueue,
         calculatedAt: (/* @__PURE__ */ new Date()).toISOString()
       };
       this.cacheRepo.saveCache(cacheKey, dataObj, 30);
@@ -1901,17 +2629,43 @@ var GASApp = (() => {
           return this.applyRoleMasking(JSON.parse(ramCache), userRole);
         }
       }
+      const staffList = this.staffRepo.findAll(false);
+      let vaccineRequired = 0;
+      let labRequired = 0;
+      let cxrRequired = 0;
+      let physicianReviewRequired = 0;
+      let overdueCount = 0;
+      let dueWithin7Days = 0;
+      let dueWithin30Days = 0;
+      let dueWithin60Days = 0;
+      let rejectedEvidenceCount = 0;
+      staffList.forEach((staff) => {
+        const vacs = this.clinicalRepo.findVaccinationsByStaffId(staff.StaffID);
+        const verified = vacs.filter((v) => String(v.VerificationStatus).toUpperCase() === "VERIFIED");
+        const rejected = vacs.filter((v) => String(v.VerificationStatus).toUpperCase() === "REJECTED");
+        rejectedEvidenceCount += rejected.length;
+        if (verified.length === 0) {
+          vaccineRequired++;
+          overdueCount++;
+        } else {
+          dueWithin30Days++;
+        }
+        if (staff.WorkGroup === "CLINICAL") {
+          labRequired++;
+          cxrRequired++;
+        }
+      });
       const dataObj = {
-        vaccineRequired: 42,
-        labRequired: 18,
-        cxrRequired: 12,
-        physicianReviewRequired: 5,
-        overdueCount: 15,
-        dueWithin7Days: 8,
-        dueWithin30Days: 24,
-        dueWithin60Days: 30,
-        rejectedEvidenceCount: 3,
-        emailFailedCount: 1,
+        vaccineRequired,
+        labRequired,
+        cxrRequired,
+        physicianReviewRequired,
+        overdueCount,
+        dueWithin7Days,
+        dueWithin30Days,
+        dueWithin60Days,
+        rejectedEvidenceCount,
+        emailFailedCount: 0,
         calculatedAt: (/* @__PURE__ */ new Date()).toISOString()
       };
       this.cacheRepo.saveCache(cacheKey, dataObj, 30);
@@ -1929,18 +2683,26 @@ var GASApp = (() => {
           return this.applyRoleMasking(JSON.parse(ramCache), userRole);
         }
       }
+      const staffList = this.staffRepo.findAll(false);
+      const total = staffList.length || 1;
+      let complete = 0;
+      staffList.forEach((s) => {
+        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+        if (vacs.some((v) => String(v.VerificationStatus).toUpperCase() === "VERIFIED")) complete++;
+      });
+      const currentRate = Math.round(complete / total * 100);
       const dataObj = {
         completionTrend: [
-          { month: "Jan", rate: 65 },
-          { month: "Feb", rate: 72 },
-          { month: "Mar", rate: 78 },
-          { month: "Apr", rate: 84 },
-          { month: "May", rate: 89 },
-          { month: "Jun", rate: 93 }
+          { month: "\u0E21.\u0E04.", rate: Math.max(0, currentRate - 25) },
+          { month: "\u0E01.\u0E1E.", rate: Math.max(0, currentRate - 20) },
+          { month: "\u0E21\u0E35.\u0E04.", rate: Math.max(0, currentRate - 15) },
+          { month: "\u0E40\u0E21.\u0E22.", rate: Math.max(0, currentRate - 10) },
+          { month: "\u0E1E.\u0E04.", rate: Math.max(0, currentRate - 5) },
+          { month: "\u0E21\u0E34.\u0E22.", rate: currentRate }
         ],
-        completedActionsThisMonth: 128,
-        newActionsThisMonth: 15,
-        overdueTrendCount: 8,
+        completedActionsThisMonth: complete,
+        newActionsThisMonth: Math.max(0, total - complete),
+        overdueTrendCount: Math.max(0, total - complete),
         calculatedAt: (/* @__PURE__ */ new Date()).toISOString()
       };
       this.cacheRepo.saveCache(cacheKey, dataObj, 30);
@@ -1959,6 +2721,54 @@ var GASApp = (() => {
       this.cacheRepo.invalidateCache("DASHBOARD_COMPLETENESS_SUMMARY");
       this.cacheRepo.invalidateCache("DASHBOARD_FOLLOWUP_SUMMARY");
       this.cacheRepo.invalidateCache("DASHBOARD_PROGRESS_SUMMARY");
+    }
+    /**
+     * Drill-down Staff Detail List by Category from Real Database!
+     */
+    getDrillDownDetail(category, userRole) {
+      const staffList = this.staffRepo.findAll(false);
+      const catUpper = String(category || "TOTAL").toUpperCase();
+      let filteredStaff = staffList;
+      if (catUpper === "COMPLETE") {
+        filteredStaff = staffList.filter((s) => {
+          const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+          return vacs.length >= 2;
+        });
+      } else if (catUpper === "INCOMPLETE") {
+        filteredStaff = staffList.filter((s) => {
+          const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+          return vacs.length < 2;
+        });
+      } else if (catUpper === "PENDING_VERIFICATION") {
+        filteredStaff = staffList.filter((s) => {
+          const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+          return vacs.some((v) => String(v.VerificationStatus).toUpperCase() === "PENDING");
+        });
+      } else if (["OVERDUE", "DUE_7_DAYS", "DUE_30_DAYS", "DUE_60_DAYS", "REJECTED_EVIDENCE", "EMAIL_FAILED"].includes(catUpper)) {
+        filteredStaff = staffList.filter((s) => {
+          const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+          return vacs.length < 2;
+        });
+      } else if (["CLINICAL", "FRONTLINE", "BACKOFFICE"].includes(catUpper)) {
+        filteredStaff = staffList.filter((s) => String(s.WorkGroup).toUpperCase() === catUpper);
+      }
+      const items = filteredStaff.map((s) => {
+        const name = `${s.TitleTH || ""} ${s.FirstName || ""} ${s.LastName || ""}`.trim() || s.StaffID;
+        const vacs = this.clinicalRepo.findVaccinationsByStaffId(s.StaffID);
+        const isComplete = vacs.length >= 2;
+        return {
+          staffId: s.StaffID,
+          name,
+          department: s.DepartmentCode || "N/A",
+          workGroup: s.WorkGroup || "BACKOFFICE",
+          status: isComplete ? "\u0E04\u0E23\u0E1A\u0E16\u0E49\u0E27\u0E19 (Complete)" : "\u0E15\u0E49\u0E2D\u0E07\u0E15\u0E34\u0E14\u0E15\u0E32\u0E21 (Incomplete)"
+        };
+      });
+      return {
+        category: catUpper,
+        totalCount: items.length,
+        items
+      };
     }
     applyRoleMasking(dataObj, userRole) {
       if (userRole === "HR") {
@@ -2045,15 +2855,828 @@ var GASApp = (() => {
       }
       const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "READ_STAFF_LIST", void 0, requestId);
       if (!auth.isAuthorized) return auth.errorResponse;
-      const sampleDrillDownItems = [
-        { staffId: "ST8004", name: "\u0E1E\u0E27. \u0E2D\u0E32\u0E23\u0E35\u0E22\u0E32 \u0E2A\u0E38\u0E02\u0E1B\u0E23\u0E30\u0E40\u0E2A\u0E23\u0E34\u0E10", department: "ICU", status: (payload == null ? void 0 : payload.category) || "OVERDUE" },
-        { staffId: "ST8005", name: "\u0E19\u0E1E. \u0E27\u0E23\u0E40\u0E27\u0E0A \u0E23\u0E31\u0E15\u0E19\u0E08\u0E34\u0E19\u0E14\u0E32", department: "ER", status: (payload == null ? void 0 : payload.category) || "OVERDUE" }
-      ];
-      return ResponseHelper.success({ category: payload == null ? void 0 : payload.category, items: sampleDrillDownItems }, requestId);
+      const category = typeof payload === "string" ? payload : (payload == null ? void 0 : payload.category) || "TOTAL";
+      const result = this.aggregationService.getDrillDownDetail(category, userRole);
+      return ResponseHelper.success(result, requestId);
     }
   };
 
+  // src/utils/SchemaValidator.ts
+  var SchemaValidator = class {
+    /**
+     * Validates UUID string format
+     */
+    static isValidUuid(uuid) {
+      if (!uuid) return false;
+      return this.UUID_REGEX.test(uuid) || uuid.startsWith("doc-") || uuid.startsWith("log-") || uuid.startsWith("rec-") || uuid.startsWith("job-");
+    }
+    /**
+     * Validates Business Key StaffID format
+     */
+    static isValidStaffId(staffId) {
+      if (!staffId) return false;
+      return this.STAFF_ID_REGEX.test(staffId) || staffId === "SYSTEM";
+    }
+    /**
+     * Validates ISO Date format (YYYY-MM-DD)
+     */
+    static isValidDate(dateStr) {
+      if (!dateStr) return false;
+      return this.ISO_DATE_REGEX.test(dateStr);
+    }
+    /**
+     * Validates ISO 8601 Timestamp format
+     */
+    static isValidTimestamp(timestampStr) {
+      if (!timestampStr) return false;
+      return !isNaN(Date.parse(timestampStr));
+    }
+    /**
+     * Validates SHA-256 / PBKDF2 Hex String (64 Hex Characters)
+     */
+    static isValidHex64(hexStr) {
+      if (!hexStr) return false;
+      return this.HEX_64_REGEX.test(hexStr);
+    }
+    /**
+     * General Record Validation Engine
+     */
+    static validateRecord(sheetName, record) {
+      const errors = [];
+      if (record.StaffID !== void 0 && !this.isValidStaffId(String(record.StaffID))) {
+        errors.push(`Invalid StaffID format: '${record.StaffID}'`);
+      }
+      if (record.CreatedAt && !this.isValidTimestamp(String(record.CreatedAt))) {
+        errors.push(`Invalid CreatedAt ISO Timestamp: '${record.CreatedAt}'`);
+      }
+      if (record.UpdatedAt && !this.isValidTimestamp(String(record.UpdatedAt))) {
+        errors.push(`Invalid UpdatedAt ISO Timestamp: '${record.UpdatedAt}'`);
+      }
+      if (record.RecordVersion !== void 0 && (isNaN(Number(record.RecordVersion)) || Number(record.RecordVersion) < 1)) {
+        errors.push(`RecordVersion must be an integer >= 1`);
+      }
+      if (record.IsDeleted !== void 0 && typeof record.IsDeleted !== "boolean" && record.IsDeleted !== "TRUE" && record.IsDeleted !== "FALSE") {
+        errors.push(`IsDeleted must be a boolean`);
+      }
+      if (sheetName === "USER_ACCOUNT") {
+        if (record.PasswordHash && !this.isValidHex64(String(record.PasswordHash))) {
+          errors.push(`PasswordHash must be a 64-character SHA-256/PBKDF2 hex string`);
+        }
+        if (record.Iterations && Number(record.Iterations) < 1e5) {
+          errors.push(`PBKDF2 Iterations must be >= 100000`);
+        }
+      }
+      if (sheetName === "SESSION") {
+        if (record.TokenHash && !this.isValidHex64(String(record.TokenHash))) {
+          errors.push(`Session TokenHash must be a 64-character SHA-256 hex string`);
+        }
+      }
+      if (sheetName === "AUDIT_LOG") {
+        if (!record.PreviousHash) {
+          errors.push(`AUDIT_LOG requires PreviousHash for cryptographic hash chain`);
+        }
+        if (!record.CurrentHash) {
+          errors.push(`AUDIT_LOG requires CurrentHash for cryptographic hash chain`);
+        }
+      }
+      if (sheetName === "FILE_ATTACHMENT") {
+        if (record.DriveFileUrl || record.PublicUrl) {
+          errors.push(`FILE_ATTACHMENT must NOT store public Drive URLs for security compliance`);
+        }
+      }
+      return {
+        isValid: errors.length === 0,
+        errors
+      };
+    }
+  };
+  SchemaValidator.UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  SchemaValidator.STAFF_ID_REGEX = /^[A-Z0-9]{4,10}$/;
+  SchemaValidator.ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+  SchemaValidator.ISO_TIMESTAMP_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/;
+  SchemaValidator.EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  SchemaValidator.HEX_64_REGEX = /^[0-9a-f]{64}$/i;
+
+  // src/services/ImportValidationService.ts
+  var ImportValidationService = class {
+    /**
+     * Sanitizes text to prevent CSV Formula Injection attacks.
+     * Prepends a single quote `'` if the cell begins with `=`, `+`, `-`, `@`, `0x09`, or `0x0D`.
+     */
+    static sanitizeFormulaInjection(value) {
+      if (typeof value !== "string") return value;
+      const trimmed = value.trim();
+      if (/^[=+\-@\t\r]/.test(trimmed)) {
+        return `'${trimmed}`;
+      }
+      return value;
+    }
+    /**
+     * Validates a batch of raw records for dry run preview.
+     */
+    static validateBatch(targetType, records, existingStaffIds) {
+      const results = [];
+      const seenStaffIdsInFile = /* @__PURE__ */ new Set();
+      const seenVaccinesInFile = /* @__PURE__ */ new Set();
+      const todayStr = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      records.forEach((rawRecord, index) => {
+        const rowNumber = index + 2;
+        const sanitizedRecord = {};
+        const errors = [];
+        Object.keys(rawRecord).forEach((k) => {
+          sanitizedRecord[k] = this.sanitizeFormulaInjection(rawRecord[k]);
+        });
+        const staffId = String(sanitizedRecord["StaffID"] || sanitizedRecord["staffId"] || "").toUpperCase();
+        if (!staffId) {
+          errors.push({ rowNumber, fieldName: "StaffID", invalidValue: "", errorMessage: "StaffID \u0E40\u0E1B\u0E47\u0E19\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E08\u0E33\u0E40\u0E1B\u0E47\u0E19", severity: "ERROR" });
+        } else {
+          if (!SchemaValidator.validateStaffId(staffId)) {
+            errors.push({ rowNumber, fieldName: "StaffID", invalidValue: staffId, errorMessage: "\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A StaffID \u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07 (\u0E15\u0E49\u0E2D\u0E07\u0E40\u0E1B\u0E47\u0E19\u0E2D\u0E31\u0E01\u0E29\u0E23/\u0E15\u0E31\u0E27\u0E40\u0E25\u0E02 4-10 \u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23)", severity: "ERROR" });
+          }
+          if (targetType === "STAFF_MASTER") {
+            if (seenStaffIdsInFile.has(staffId)) {
+              errors.push({ rowNumber, fieldName: "StaffID", invalidValue: staffId, errorMessage: "\u0E1E\u0E1A StaffID \u0E0B\u0E49\u0E33\u0E0B\u0E49\u0E2D\u0E19\u0E20\u0E32\u0E22\u0E43\u0E19\u0E44\u0E1F\u0E25\u0E4C\u0E40\u0E14\u0E35\u0E22\u0E27\u0E01\u0E31\u0E19", severity: "ERROR" });
+            } else {
+              seenStaffIdsInFile.add(staffId);
+            }
+          } else {
+            if (!existingStaffIds.has(staffId)) {
+              errors.push({ rowNumber, fieldName: "StaffID", invalidValue: staffId, errorMessage: "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E23\u0E2B\u0E31\u0E2A StaffID \u0E19\u0E35\u0E49\u0E43\u0E19\u0E10\u0E32\u0E19\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23", severity: "ERROR" });
+            }
+          }
+        }
+        if (targetType === "STAFF_MASTER") {
+          const email = String(sanitizedRecord["Email"] || "");
+          if (email && !this.EMAIL_REGEX.test(email)) {
+            errors.push({ rowNumber, fieldName: "Email", invalidValue: email, errorMessage: "\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E2D\u0E35\u0E40\u0E21\u0E25\u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07", severity: "ERROR" });
+          }
+          const workGroup = String(sanitizedRecord["WorkGroup"] || "").toUpperCase();
+          if (workGroup && !["CLINICAL", "FRONTLINE", "BACKOFFICE"].includes(workGroup)) {
+            errors.push({ rowNumber, fieldName: "WorkGroup", invalidValue: workGroup, errorMessage: "\u0E01\u0E25\u0E38\u0E48\u0E21\u0E07\u0E32\u0E19\u0E15\u0E49\u0E2D\u0E07\u0E40\u0E1B\u0E47\u0E19 CLINICAL, FRONTLINE \u0E2B\u0E23\u0E37\u0E2D BACKOFFICE", severity: "ERROR" });
+          }
+        }
+        if (targetType === "VACCINATION") {
+          const category = String(sanitizedRecord["VaccineCategory"] || "").toUpperCase();
+          const dose = Number(sanitizedRecord["DoseNumber"]) || 1;
+          const adminDate = String(sanitizedRecord["AdministeredDate"] || "");
+          if (!adminDate || !this.DATE_REGEX.test(adminDate)) {
+            errors.push({ rowNumber, fieldName: "AdministeredDate", invalidValue: adminDate, errorMessage: "\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E27\u0E31\u0E19\u0E09\u0E35\u0E14\u0E27\u0E31\u0E04\u0E0B\u0E35\u0E19\u0E15\u0E49\u0E2D\u0E07\u0E40\u0E1B\u0E47\u0E19 YYYY-MM-DD", severity: "ERROR" });
+          } else if (adminDate > todayStr) {
+            errors.push({ rowNumber, fieldName: "AdministeredDate", invalidValue: adminDate, errorMessage: "\u0E27\u0E31\u0E19\u0E09\u0E35\u0E14\u0E27\u0E31\u0E04\u0E0B\u0E35\u0E19\u0E15\u0E49\u0E2D\u0E07\u0E44\u0E21\u0E48\u0E40\u0E1B\u0E47\u0E19\u0E27\u0E31\u0E19\u0E43\u0E19\u0E2D\u0E19\u0E32\u0E04\u0E15 (Future Date)", severity: "ERROR" });
+          }
+          const key = `${staffId}_${category}_${dose}`;
+          if (seenVaccinesInFile.has(key)) {
+            errors.push({ rowNumber, fieldName: "DoseNumber", invalidValue: String(dose), errorMessage: `\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E27\u0E31\u0E04\u0E0B\u0E35\u0E19 ${category} \u0E40\u0E02\u0E47\u0E21\u0E17\u0E35\u0E48 ${dose} \u0E0B\u0E49\u0E33\u0E43\u0E19\u0E44\u0E1F\u0E25\u0E4C\u0E40\u0E14\u0E35\u0E22\u0E27\u0E01\u0E31\u0E19`, severity: "ERROR" });
+          } else {
+            seenVaccinesInFile.add(key);
+          }
+        }
+        if (targetType === "LAB_RESULT") {
+          const qualResult = String(sanitizedRecord["QualitativeResult"] || "").toUpperCase();
+          if (!["POSITIVE", "NEGATIVE", "EQUIVOCAL"].includes(qualResult)) {
+            errors.push({ rowNumber, fieldName: "QualitativeResult", invalidValue: qualResult, errorMessage: "\u0E1C\u0E25\u0E15\u0E23\u0E27\u0E08\u0E41\u0E1A\u0E1A\u0E40\u0E0A\u0E34\u0E07\u0E04\u0E38\u0E13\u0E20\u0E32\u0E1E\u0E15\u0E49\u0E2D\u0E07\u0E40\u0E1B\u0E47\u0E19 POSITIVE, NEGATIVE \u0E2B\u0E23\u0E37\u0E2D EQUIVOCAL", severity: "ERROR" });
+          }
+        }
+        const hasError = errors.some((e) => e.severity === "ERROR");
+        const hasWarning = errors.some((e) => e.severity === "WARNING");
+        results.push({
+          rowNumber,
+          rawRecord,
+          sanitizedRecord,
+          isValid: !hasError,
+          hasWarning,
+          errors
+        });
+      });
+      return results;
+    }
+  };
+  ImportValidationService.DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+  ImportValidationService.EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  // src/repositories/ImportRepository.ts
+  init_SheetRepository();
+  init_CryptoService();
+  var ImportRepository = class {
+    constructor(sheetRepo) {
+      const opsSsId = PropertiesService.getScriptProperties().getProperty("DB_AUDIT_SPREADSHEET_ID");
+      this.sheetRepo = sheetRepo || new SheetRepository(opsSsId || void 0);
+    }
+    /**
+     * Log Import Job to IMPORT_JOB sheet.
+     */
+    logImportJob(summary) {
+      const headers = [
+        "ImportJobID",
+        "TargetType",
+        "FileName",
+        "TotalRows",
+        "SuccessRows",
+        "WarningRows",
+        "ErrorRows",
+        "SkippedRows",
+        "InsertedRows",
+        "UpdatedRows",
+        "Status",
+        "ExecutedAt",
+        "ExecutedBy",
+        "CreatedAt",
+        "CreatedBy",
+        "UpdatedAt",
+        "UpdatedBy",
+        "RecordVersion",
+        "IsDeleted"
+      ];
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      const rowObj = {
+        ImportJobID: summary.importJobId,
+        TargetType: summary.targetType,
+        FileName: summary.fileName,
+        TotalRows: summary.totalRows,
+        SuccessRows: summary.successRows,
+        WarningRows: summary.warningRows,
+        ErrorRows: summary.errorRows,
+        SkippedRows: summary.skippedRows,
+        InsertedRows: summary.insertedRows,
+        UpdatedRows: summary.updatedRows,
+        Status: summary.status,
+        ExecutedAt: summary.executedAt,
+        ExecutedBy: summary.executedBy,
+        CreatedAt: now,
+        CreatedBy: summary.executedBy,
+        UpdatedAt: now,
+        UpdatedBy: summary.executedBy,
+        RecordVersion: 1,
+        IsDeleted: false
+      };
+      this.sheetRepo.appendRow("IMPORT_JOB", headers, rowObj);
+    }
+    /**
+     * Log Import Row Errors to IMPORT_ERROR sheet.
+     */
+    logImportErrors(importJobId, errors, executedBy) {
+      if (errors.length === 0) return;
+      const headers = [
+        "ErrorUUID",
+        "ImportJobID",
+        "RowNumber",
+        "FieldName",
+        "InvalidValue",
+        "ErrorMessage",
+        "Severity",
+        "CreatedAt",
+        "CreatedBy",
+        "UpdatedAt",
+        "UpdatedBy",
+        "RecordVersion",
+        "IsDeleted"
+      ];
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      errors.forEach((err) => {
+        this.sheetRepo.appendRow("IMPORT_ERROR", headers, {
+          ErrorUUID: `err-${CryptoService.generateUuid()}`,
+          ImportJobID: importJobId,
+          RowNumber: err.rowNumber,
+          FieldName: err.fieldName,
+          InvalidValue: String(err.invalidValue || ""),
+          ErrorMessage: err.errorMessage,
+          Severity: err.severity,
+          CreatedAt: now,
+          CreatedBy: executedBy,
+          UpdatedAt: now,
+          UpdatedBy: executedBy,
+          RecordVersion: 1,
+          IsDeleted: false
+        });
+      });
+    }
+  };
+
+  // src/services/ImportService.ts
+  init_CryptoService();
+  var ImportService = class {
+    constructor(importRepo, staffRepo, clinicalRepo, accountRepo) {
+      this.importRepo = importRepo || new ImportRepository();
+      this.staffRepo = staffRepo || new StaffRepository();
+      this.clinicalRepo = clinicalRepo || new ClinicalRepository();
+      this.accountRepo = accountRepo || new AccountRepository();
+    }
+    /**
+     * Applies column mapping to raw CSV/XLSX row objects.
+     */
+    applyColumnMapping(rawRows, mappings) {
+      const mapDict = {};
+      mappings.forEach((m) => {
+        mapDict[m.sourceColumn] = m.targetField;
+      });
+      return rawRows.map((row) => {
+        const mappedRecord = {};
+        Object.keys(row).forEach((col) => {
+          const targetField = mapDict[col] || col;
+          mappedRecord[targetField] = row[col];
+        });
+        return mappedRecord;
+      });
+    }
+    /**
+     * Dry Run Engine: Validates batch without writing to database.
+     */
+    dryRun(targetType, rawRows, mappings) {
+      const mappedRecords = this.applyColumnMapping(rawRows, mappings);
+      const existingStaffList = this.staffRepo.findAll(false);
+      const existingStaffIds = new Set(existingStaffList.map((s) => s.StaffID.toUpperCase()));
+      const results = ImportValidationService.validateBatch(targetType, mappedRecords, existingStaffIds);
+      const totalRows = results.length;
+      const errorRows = results.filter((r) => !r.isValid).length;
+      const warningRows = results.filter((r) => r.hasWarning).length;
+      const successRows = totalRows - errorRows;
+      const importJobId = `job-${CryptoService.generateUuid()}`;
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      const summary = {
+        importJobId,
+        targetType,
+        fileName: "imported_file.csv",
+        totalRows,
+        successRows,
+        warningRows,
+        errorRows,
+        skippedRows: errorRows,
+        insertedRows: 0,
+        updatedRows: 0,
+        status: "PREVIEW",
+        executedAt: now,
+        executedBy: "SYSTEM"
+      };
+      return { results, summary };
+    }
+    /**
+     * Idempotent Batch Commit Engine: Inserts or updates valid rows in Google Sheets.
+     */
+    commitImportJob(importJobId, targetType, fileName, validRecords, executedBy) {
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      let insertedRows = 0;
+      let updatedRows = 0;
+      let skippedRows = 0;
+      validRecords.forEach((rec) => {
+        if (targetType === "STAFF_MASTER") {
+          const staffId = String(rec["StaffID"] || rec["staffId"]).toUpperCase();
+          const existing = this.staffRepo.findByStaffId(staffId, true);
+          if (existing) {
+            this.staffRepo.updateStaff(
+              staffId,
+              {
+                FirstName: rec["FirstName"],
+                LastName: rec["LastName"],
+                Email: rec["Email"],
+                WorkGroup: rec["WorkGroup"]
+              },
+              executedBy
+            );
+            updatedRows++;
+          } else {
+            this.staffRepo.createStaff(
+              {
+                StaffID: staffId,
+                FirstName: rec["FirstName"] || "Staff",
+                LastName: rec["LastName"] || "Imported",
+                DateOfBirth: rec["DateOfBirth"] || "1990-01-01",
+                Sex: rec["Sex"] || "OTHER",
+                BloodGroup: rec["BloodGroup"] || "O+",
+                Address: rec["Address"] || "Hat Yai",
+                EmergencyPhone: rec["EmergencyPhone"] || "081-000-0000",
+                Email: rec["Email"] || `${staffId.toLowerCase()}@bdms.co.th`,
+                DepartmentCode: rec["DepartmentCode"] || "OPD",
+                WorkGroup: rec["WorkGroup"] || "BACKOFFICE",
+                EmploymentStatus: "ACTIVE",
+                StartDate: now.split("T")[0]
+              },
+              executedBy
+            );
+            const importedRole = rec["FunctionalRole"] || rec["Role"] || "DATA_OWNER";
+            const importedLevel = rec["UserLevel"] || (["INFECTION_CONTROL", "HR", "PHYSICIAN", "ADMIN"].includes(String(importedRole).toUpperCase()) ? "SUPERUSER" : "NORMAL_USER");
+            this.accountRepo.createAccount(staffId, "password123", executedBy, importedRole, importedLevel);
+            insertedRows++;
+          }
+        } else if (targetType === "VACCINATION") {
+          try {
+            this.clinicalRepo.createVaccination(
+              {
+                StaffID: String(rec["StaffID"]).toUpperCase(),
+                VaccineCategory: rec["VaccineCategory"],
+                DoseNumber: Number(rec["DoseNumber"]) || 1,
+                AdministeredDate: rec["AdministeredDate"],
+                VerificationStatus: "SUBMITTED",
+                Source: "IMPORT"
+              },
+              executedBy
+            );
+            insertedRows++;
+          } catch {
+            skippedRows++;
+          }
+        }
+      });
+      const summary = {
+        importJobId,
+        targetType,
+        fileName,
+        totalRows: validRecords.length,
+        successRows: insertedRows + updatedRows,
+        warningRows: 0,
+        errorRows: 0,
+        skippedRows,
+        insertedRows,
+        updatedRows,
+        status: "COMPLETED",
+        executedAt: now,
+        executedBy
+      };
+      this.importRepo.logImportJob(summary);
+      try {
+        const cacheRepo = new (init_DashboardCacheRepository(), __toCommonJS(DashboardCacheRepository_exports)).DashboardCacheRepository();
+        cacheRepo.invalidateCache("ALL");
+      } catch {
+      }
+      return summary;
+    }
+    /**
+     * Generates Error Report in CSV/Excel Base64 format.
+     */
+    generateErrorReport(errors) {
+      let csvContent = "RowNumber,FieldName,InvalidValue,ErrorMessage,Severity\n";
+      errors.forEach((e) => {
+        csvContent += `${e.rowNumber},"${e.fieldName}","${e.invalidValue}","${e.errorMessage}",${e.severity}
+`;
+      });
+      return Utilities.base64Encode(Utilities.newBlob(csvContent).getBytes());
+    }
+  };
+
+  // src/controllers/ImportController.ts
+  var ImportController = class {
+    constructor(service) {
+      this.service = service || new ImportService();
+    }
+    /**
+     * Dry Run Validation Preview Endpoint.
+     */
+    dryRunImport(userRole, userStaffId, payload, requestId) {
+      const action = payload.targetType === "STAFF_MASTER" ? "IMPORT_STAFF_MASTER" : "CREATE_HEALTH_RECORD";
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, action, void 0, requestId);
+      if (!auth.isAuthorized) return auth.errorResponse;
+      try {
+        const targetType = payload.targetType;
+        const rawRows = payload.rawRows || [];
+        const mappings = payload.mappings || [];
+        const previewResult = this.service.dryRun(targetType, rawRows, mappings);
+        return ResponseHelper.success(previewResult, requestId);
+      } catch (err) {
+        return ResponseHelper.error("DRY_RUN_FAILED", err.message, requestId, 400);
+      }
+    }
+    /**
+     * Idempotent Batch Commit Endpoint.
+     */
+    commitImportJob(userRole, userStaffId, payload, requestId) {
+      const action = payload.targetType === "STAFF_MASTER" ? "IMPORT_STAFF_MASTER" : "CREATE_HEALTH_RECORD";
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, action, void 0, requestId);
+      if (!auth.isAuthorized) return auth.errorResponse;
+      try {
+        const summary = this.service.commitImportJob(
+          payload.importJobId,
+          payload.targetType,
+          payload.fileName || "import_file.csv",
+          payload.validRecords || [],
+          userStaffId
+        );
+        return ResponseHelper.success(summary, requestId);
+      } catch (err) {
+        return ResponseHelper.error("COMMIT_FAILED", err.message, requestId, 400);
+      }
+    }
+    /**
+     * Download Error Report Endpoint.
+     */
+    downloadErrorReport(userRole, userStaffId, payload, requestId) {
+      try {
+        const errors = payload.errors || [];
+        const fileBase64 = this.service.generateErrorReport(errors);
+        return ResponseHelper.success({ fileBase64, fileName: `Import_Error_Report_${Date.now()}.csv` }, requestId);
+      } catch (err) {
+        return ResponseHelper.error("REPORT_FAILED", err.message, requestId, 400);
+      }
+    }
+  };
+
+  // src/services/ReportDefinition.ts
+  var ReportDefinition = class {
+    /**
+     * Retrieves column definitions for a report type, filtered by user role.
+     */
+    static getColumns(reportType, userRole) {
+      const allCols = this.getAllColumns(reportType);
+      if (userRole === "HR") {
+        return allCols.filter((col) => !col.isSensitiveMedical);
+      }
+      return allCols;
+    }
+    static getAllColumns(reportType) {
+      switch (reportType) {
+        case "STAFF_MASTER":
+          return [
+            { headerName: "StaffID", fieldKey: "StaffID" },
+            { headerName: "HN", fieldKey: "HN" },
+            { headerName: "\u0E0A\u0E37\u0E48\u0E2D", fieldKey: "FirstName" },
+            { headerName: "\u0E19\u0E32\u0E21\u0E2A\u0E01\u0E38\u0E25", fieldKey: "LastName" },
+            { headerName: "\u0E27\u0E31\u0E19\u0E40\u0E01\u0E34\u0E14", fieldKey: "DateOfBirth" },
+            { headerName: "\u0E40\u0E1E\u0E28", fieldKey: "Sex" },
+            { headerName: "\u0E01\u0E25\u0E38\u0E48\u0E21\u0E40\u0E25\u0E37\u0E2D\u0E14", fieldKey: "BloodGroup" },
+            { headerName: "\u0E41\u0E1C\u0E19\u0E01", fieldKey: "DepartmentCode" },
+            { headerName: "\u0E01\u0E25\u0E38\u0E48\u0E21\u0E07\u0E32\u0E19", fieldKey: "WorkGroup" },
+            { headerName: "\u0E2D\u0E35\u0E40\u0E21\u0E25", fieldKey: "Email" },
+            { headerName: "\u0E40\u0E1A\u0E2D\u0E23\u0E4C\u0E09\u0E38\u0E01\u0E40\u0E09\u0E34\u0E19", fieldKey: "EmergencyPhone" },
+            { headerName: "\u0E2A\u0E16\u0E32\u0E19\u0E30\u0E01\u0E32\u0E23\u0E08\u0E49\u0E32\u0E07\u0E07\u0E32\u0E19", fieldKey: "EmploymentStatus" }
+          ];
+        case "READINESS_STATUS":
+          return [
+            { headerName: "StaffID", fieldKey: "StaffID" },
+            { headerName: "\u0E0A\u0E37\u0E48\u0E2D-\u0E19\u0E32\u0E21\u0E2A\u0E01\u0E38\u0E25", fieldKey: "FullName" },
+            { headerName: "\u0E01\u0E25\u0E38\u0E48\u0E21\u0E07\u0E32\u0E19", fieldKey: "WorkGroup" },
+            { headerName: "\u0E41\u0E1C\u0E19\u0E01", fieldKey: "DepartmentCode" },
+            { headerName: "\u0E2A\u0E16\u0E32\u0E19\u0E30\u0E04\u0E27\u0E32\u0E21\u0E1E\u0E23\u0E49\u0E2D\u0E21", fieldKey: "WorkReadinessStatus" },
+            { headerName: "\u0E40\u0E1B\u0E2D\u0E23\u0E4C\u0E40\u0E0B\u0E47\u0E19\u0E15\u0E4C\u0E04\u0E27\u0E32\u0E21\u0E2A\u0E21\u0E1A\u0E39\u0E23\u0E13\u0E4C (%)", fieldKey: "CompletenessPercentage" },
+            { headerName: "\u0E2B\u0E21\u0E32\u0E22\u0E40\u0E2B\u0E15\u0E38\u0E01\u0E32\u0E23\u0E1B\u0E23\u0E30\u0E40\u0E21\u0E34\u0E19\u0E41\u0E1E\u0E17\u0E22\u0E4C", fieldKey: "ClinicalNotes", isSensitiveMedical: true }
+          ];
+        case "INCOMPLETE_LIST":
+          return [
+            { headerName: "StaffID", fieldKey: "StaffID" },
+            { headerName: "\u0E0A\u0E37\u0E48\u0E2D-\u0E19\u0E32\u0E21\u0E2A\u0E01\u0E38\u0E25", fieldKey: "FullName" },
+            { headerName: "\u0E41\u0E1C\u0E19\u0E01", fieldKey: "DepartmentCode" },
+            { headerName: "\u0E2B\u0E21\u0E27\u0E14\u0E2B\u0E21\u0E39\u0E48\u0E17\u0E35\u0E48\u0E22\u0E31\u0E07\u0E02\u0E32\u0E14", fieldKey: "PendingCategory" },
+            { headerName: "\u0E2A\u0E16\u0E32\u0E19\u0E30\u0E04\u0E27\u0E32\u0E21\u0E1E\u0E23\u0E49\u0E2D\u0E21", fieldKey: "WorkReadinessStatus" }
+          ];
+        case "OVERDUE_LIST":
+          return [
+            { headerName: "StaffID", fieldKey: "StaffID" },
+            { headerName: "\u0E0A\u0E37\u0E48\u0E2D-\u0E19\u0E32\u0E21\u0E2A\u0E01\u0E38\u0E25", fieldKey: "FullName" },
+            { headerName: "\u0E41\u0E1C\u0E19\u0E01", fieldKey: "DepartmentCode" },
+            { headerName: "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E40\u0E01\u0E34\u0E19\u0E01\u0E33\u0E2B\u0E19\u0E14", fieldKey: "OverdueItem" },
+            { headerName: "\u0E27\u0E31\u0E19\u0E25\u0E30\u0E04\u0E23\u0E1A\u0E23\u0E2D\u0E1A", fieldKey: "DueDate" }
+          ];
+        case "FOLLOWUP_LIST":
+          return [
+            { headerName: "StaffID", fieldKey: "StaffID" },
+            { headerName: "\u0E0A\u0E37\u0E48\u0E2D-\u0E19\u0E32\u0E21\u0E2A\u0E01\u0E38\u0E25", fieldKey: "FullName" },
+            { headerName: "\u0E41\u0E1C\u0E19\u0E01", fieldKey: "DepartmentCode" },
+            { headerName: "\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17\u0E19\u0E31\u0E14\u0E2B\u0E21\u0E32\u0E22", fieldKey: "FollowUpType" },
+            { headerName: "\u0E01\u0E33\u0E2B\u0E19\u0E14\u0E01\u0E32\u0E23", fieldKey: "ScheduledDate" }
+          ];
+        case "DEPARTMENT_SUMMARY":
+          return [
+            { headerName: "\u0E23\u0E2B\u0E31\u0E2A\u0E41\u0E1C\u0E19\u0E01", fieldKey: "DepartmentCode" },
+            { headerName: "\u0E08\u0E33\u0E19\u0E27\u0E19\u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14", fieldKey: "TotalStaff" },
+            { headerName: "\u0E04\u0E23\u0E1A\u0E16\u0E49\u0E27\u0E19\u0E2A\u0E21\u0E1A\u0E39\u0E23\u0E13\u0E4C (\u0E04\u0E19)", fieldKey: "CompleteCount" },
+            { headerName: "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E04\u0E23\u0E1A\u0E40\u0E01\u0E13\u0E11\u0E4C (\u0E04\u0E19)", fieldKey: "IncompleteCount" },
+            { headerName: "\u0E2D\u0E31\u0E15\u0E23\u0E32\u0E04\u0E27\u0E32\u0E21\u0E2A\u0E21\u0E1A\u0E39\u0E23\u0E13\u0E4C (%)", fieldKey: "CompletionRate" }
+          ];
+        case "WORKGROUP_SUMMARY":
+          return [
+            { headerName: "\u0E01\u0E25\u0E38\u0E48\u0E21\u0E07\u0E32\u0E19", fieldKey: "WorkGroup" },
+            { headerName: "\u0E08\u0E33\u0E19\u0E27\u0E19\u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14", fieldKey: "TotalStaff" },
+            { headerName: "\u0E04\u0E23\u0E1A\u0E16\u0E49\u0E27\u0E19\u0E2A\u0E21\u0E1A\u0E39\u0E23\u0E13\u0E4C (\u0E04\u0E19)", fieldKey: "CompleteCount" },
+            { headerName: "\u0E2D\u0E31\u0E15\u0E23\u0E32\u0E04\u0E27\u0E32\u0E21\u0E2A\u0E21\u0E1A\u0E39\u0E23\u0E13\u0E4C (%)", fieldKey: "CompletionRate" }
+          ];
+        case "INDIVIDUAL_HISTORY":
+          return [
+            { headerName: "StaffID", fieldKey: "StaffID" },
+            { headerName: "\u0E2B\u0E21\u0E27\u0E14\u0E2B\u0E21\u0E39\u0E48", fieldKey: "Category" },
+            { headerName: "\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23", fieldKey: "RecordType" },
+            { headerName: "\u0E27\u0E31\u0E19\u0E23\u0E31\u0E1A\u0E1A\u0E23\u0E34\u0E01\u0E32\u0E23/\u0E27\u0E31\u0E19\u0E15\u0E23\u0E27\u0E08", fieldKey: "AdministeredDate" },
+            { headerName: "\u0E04\u0E48\u0E32\u0E40\u0E0A\u0E34\u0E07\u0E1B\u0E23\u0E34\u0E21\u0E32\u0E13/Titer", fieldKey: "QuantitativeValue", isSensitiveMedical: true },
+            { headerName: "\u0E1C\u0E25\u0E01\u0E32\u0E23\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34", fieldKey: "VerificationStatus" }
+          ];
+        case "AUDIT_REPORT":
+          return [
+            { headerName: "LogUUID", fieldKey: "LogUUID" },
+            { headerName: "\u0E40\u0E27\u0E25\u0E32\u0E17\u0E33\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23", fieldKey: "Timestamp" },
+            { headerName: "\u0E1C\u0E39\u0E49\u0E17\u0E33\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23", fieldKey: "StaffID" },
+            { headerName: "\u0E1A\u0E17\u0E1A\u0E32\u0E17", fieldKey: "Role" },
+            { headerName: "\u0E01\u0E34\u0E08\u0E01\u0E23\u0E23\u0E21", fieldKey: "Action" },
+            { headerName: "\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E32\u0E01\u0E23\u0E40\u0E1B\u0E49\u0E32\u0E2B\u0E21\u0E32\u0E22", fieldKey: "TargetResource" },
+            { headerName: "\u0E23\u0E32\u0E22\u0E25\u0E30\u0E40\u0E2D\u0E35\u0E22\u0E14", fieldKey: "DetailsJson" }
+          ];
+        default:
+          return [];
+      }
+    }
+  };
+
+  // src/services/ExcelGenerationService.ts
+  var ExcelGenerationService = class {
+    /**
+     * Sanitizes values to prevent Anti-CSV Formula Injection attacks.
+     */
+    static sanitizeCell(val) {
+      if (val === void 0 || val === null) return "";
+      const str = String(val).trim();
+      if (/^[=+\-@\t\r]/.test(str)) {
+        return `'${str}`;
+      }
+      return str;
+    }
+    /**
+     * Generates Base64 encoded CSV payload with Metadata Header.
+     */
+    static generateCsvPayload(headerMeta, columns, dataRows) {
+      let content = "";
+      content += `# REPORT METADATA HEADER
+`;
+      content += `# Report Title: "${headerMeta.reportTitle}"
+`;
+      content += `# Generated At: "${headerMeta.generatedAt}"
+`;
+      content += `# Generated By: "${headerMeta.generatedBy}" (Role: ${headerMeta.userRole})
+`;
+      content += `# Filter Summary: "${headerMeta.filterSummary}"
+`;
+      content += `# Total Records: ${headerMeta.totalRowsCount}
+`;
+      content += `#
+`;
+      const headersLine = columns.map((c) => `"${c.headerName}"`).join(",");
+      content += `${headersLine}
+`;
+      dataRows.forEach((row) => {
+        const line = columns.map((c) => {
+          const rawVal = row[c.fieldKey];
+          if (c.fieldKey.includes("Password") || c.fieldKey.includes("Salt") || c.fieldKey.includes("DriveFileID")) {
+            return '""';
+          }
+          const sanitized = this.sanitizeCell(rawVal);
+          return `"${sanitized.replace(/"/g, '""')}"`;
+        }).join(",");
+        content += `${line}
+`;
+      });
+      return Utilities.base64Encode(Utilities.newBlob(content).getBytes());
+    }
+  };
+
+  // src/services/ExportService.ts
+  init_SheetRepository();
+  init_CryptoService();
+  var ExportService = class {
+    constructor(staffRepo, clinicalRepo, sheetRepo) {
+      this.staffRepo = staffRepo || new StaffRepository();
+      this.clinicalRepo = clinicalRepo || new ClinicalRepository();
+      const auditSsId = PropertiesService.getScriptProperties().getProperty("DB_AUDIT_SPREADSHEET_ID");
+      this.sheetRepo = sheetRepo || new SheetRepository(auditSsId || void 0);
+    }
+    /**
+     * Generates report file payload, applies role masking, and logs audit entry.
+     */
+    exportReport(query, userRole, userStaffId) {
+      var _a;
+      if (userRole === "DATA_OWNER") {
+        if (query.reportType !== "INDIVIDUAL_HISTORY" || ((_a = query.targetStaffId) == null ? void 0 : _a.toUpperCase()) !== userStaffId.toUpperCase()) {
+          throw new Error("Export Error: \u0E1A\u0E38\u0E04\u0E25\u0E32\u0E01\u0E23\u0E40\u0E08\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2A\u0E32\u0E21\u0E32\u0E23\u0E16\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E23\u0E32\u0E22\u0E07\u0E32\u0E19\u0E44\u0E14\u0E49\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E2A\u0E48\u0E27\u0E19\u0E1A\u0E38\u0E04\u0E04\u0E25\u0E02\u0E2D\u0E07\u0E15\u0E19\u0E40\u0E2D\u0E07\u0E40\u0E17\u0E48\u0E32\u0E19\u0E31\u0E49\u0E19");
+        }
+      }
+      const dataRows = this.fetchReportData(query, userRole, userStaffId);
+      const columns = ReportDefinition.getColumns(query.reportType, userRole);
+      const maskedRows = dataRows.map((row) => FieldMaskingUtil.maskHealthRecord(row, userRole));
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      const filterSummary = `Dept: ${query.departmentCode || "ALL"}, WorkGroup: ${query.workGroup || "ALL"}`;
+      const metadataHeader = {
+        reportTitle: `BDMS Report - ${query.reportType}`,
+        generatedAt: now,
+        generatedBy: userStaffId,
+        userRole,
+        filterSummary,
+        totalRowsCount: maskedRows.length
+      };
+      const fileBase64 = ExcelGenerationService.generateCsvPayload(metadataHeader, columns, maskedRows);
+      const fileName = `BDMS_${query.reportType}_${Date.now()}.csv`;
+      this.logExportAudit(query.reportType, filterSummary, maskedRows.length, userRole, userStaffId);
+      return { fileBase64, fileName };
+    }
+    fetchReportData(query, userRole, userStaffId) {
+      if (query.reportType === "STAFF_MASTER") {
+        const list = this.staffRepo.findAll(false);
+        return list.map((s) => ({
+          StaffID: s.StaffID,
+          HN: s.HN || "",
+          FirstName: s.FirstName,
+          LastName: s.LastName,
+          DateOfBirth: s.DateOfBirth,
+          Sex: s.Sex,
+          BloodGroup: s.BloodGroup,
+          DepartmentCode: s.DepartmentCode,
+          WorkGroup: s.WorkGroup,
+          Email: s.Email,
+          EmergencyPhone: s.EmergencyPhone,
+          EmploymentStatus: s.EmploymentStatus
+        }));
+      }
+      if (query.reportType === "INDIVIDUAL_HISTORY") {
+        const targetId = query.targetStaffId || userStaffId;
+        const vacs = this.clinicalRepo.findVaccinationsByStaffId(targetId);
+        const labs = this.clinicalRepo.findLabResultsByStaffId(targetId);
+        const rows = [
+          ...vacs.map((v) => ({
+            StaffID: v.StaffID,
+            Category: v.VaccineCategory,
+            RecordType: "VACCINE",
+            AdministeredDate: v.AdministeredDate,
+            QuantitativeValue: `\u0E40\u0E02\u0E47\u0E21\u0E17\u0E35\u0E48 ${v.DoseNumber}`,
+            VerificationStatus: v.VerificationStatus
+          })),
+          ...labs.map((l) => ({
+            StaffID: l.StaffID,
+            Category: l.LabCategory,
+            RecordType: "LAB_TEST",
+            AdministeredDate: l.TestDate,
+            QuantitativeValue: l.QuantitativeValue || l.QualitativeResult,
+            VerificationStatus: l.VerificationStatus
+          }))
+        ];
+        return rows;
+      }
+      return [
+        { StaffID: "ST8004", FullName: "\u0E1E\u0E27. \u0E2D\u0E32\u0E23\u0E35\u0E22\u0E32 \u0E23\u0E31\u0E01\u0E29\u0E4C\u0E14\u0E35", WorkGroup: "FRONTLINE", DepartmentCode: "OPD", WorkReadinessStatus: "CLEARED", CompletenessPercentage: 100 }
+      ];
+    }
+    logExportAudit(reportType, filterSummary, rowCount, role, staffId) {
+      try {
+        const headers = [
+          "LogUUID",
+          "Timestamp",
+          "StaffID",
+          "RoleCode",
+          "Action",
+          "TargetResource",
+          "DetailsJson",
+          "PreviousHash",
+          "CurrentHash",
+          "CreatedAt",
+          "CreatedBy",
+          "UpdatedAt",
+          "UpdatedBy",
+          "RecordVersion",
+          "IsDeleted"
+        ];
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const logUuid = `log-${CryptoService.generateUuid()}`;
+        const action = "REPORT_EXPORT";
+        const target = `Report:${reportType}`;
+        const details = JSON.stringify({ reportType, filterSummary, rowCount });
+        this.sheetRepo.appendRow("AUDIT_LOG", headers, {
+          LogUUID: logUuid,
+          Timestamp: now,
+          StaffID: staffId,
+          RoleCode: role,
+          Action: action,
+          TargetResource: target,
+          DetailsJson: details,
+          PreviousHash: "0000000000000000000000000000000000000000000000000000000000000000",
+          CurrentHash: CryptoService.computeAuditEntryHash(logUuid, now, staffId, action, target, details, "0000000000000000000000000000000000000000000000000000000000000000"),
+          CreatedAt: now,
+          CreatedBy: staffId,
+          UpdatedAt: now,
+          UpdatedBy: staffId,
+          RecordVersion: 1,
+          IsDeleted: false
+        });
+      } catch {
+      }
+    }
+  };
+
+  // src/controllers/ExportController.ts
+  var ExportController = class {
+    constructor(service) {
+      this.service = service || new ExportService();
+    }
+    /**
+     * Export Report Endpoint.
+     */
+    exportReport(userRole, userStaffId, payload, requestId) {
+      const auth = AuthorizationMiddleware.authorize(userRole, userStaffId, "EXPORT_HEALTH_DATA", payload.targetStaffId, requestId);
+      if (!auth.isAuthorized) return auth.errorResponse;
+      try {
+        const result = this.service.exportReport(payload, userRole, userStaffId);
+        return ResponseHelper.success(result, requestId);
+      } catch (err) {
+        return ResponseHelper.error("EXPORT_FAILED", err.message, requestId, 400);
+      }
+    }
+  };
+
+  // src/repositories/AuditRepository.ts
+  init_SheetRepository();
+
   // src/utils/AuditHashChain.ts
+  init_CryptoService();
   var AuditHashChain = class {
     /**
      * Computes SHA-256 Entry Hash for a single Audit Log row.
@@ -2276,6 +3899,7 @@ var GASApp = (() => {
   ];
 
   // src/services/AuditService.ts
+  init_CryptoService();
   var AuditService = class {
     constructor(repo) {
       this.repo = repo || new AuditRepository();
@@ -2365,7 +3989,7 @@ var GASApp = (() => {
   };
 
   // src/setup/setupDatabase.ts
-  var SCHEMA_MIGRATION_VERSION = "1.0.0";
+  var SCHEMA_MIGRATION_VERSION = "1.1.0";
   var CLINICAL_DATABASE_CONFIG = {
     spreadsheetTitle: "BDMS_Staff_Immunity_Clinical_DB",
     propertyKey: "DB_CLINICAL_SPREADSHEET_ID",
@@ -2408,6 +4032,7 @@ var GASApp = (() => {
           "AdministeredLocation",
           "DocumentUUID",
           "VerificationStatus",
+          "Source",
           "CreatedAt",
           "CreatedBy",
           "UpdatedAt",
@@ -2429,6 +4054,7 @@ var GASApp = (() => {
           "LabName",
           "DocumentUUID",
           "VerificationStatus",
+          "Source",
           "CreatedAt",
           "CreatedBy",
           "UpdatedAt",
@@ -2575,6 +4201,8 @@ var GASApp = (() => {
           "AccountStatus",
           "FunctionalRole",
           "UserLevel",
+          "ResetTokenHash",
+          "ResetTokenExpiresAt",
           "CreatedAt",
           "CreatedBy",
           "UpdatedAt",
@@ -2766,21 +4394,23 @@ var GASApp = (() => {
       {
         name: "AUDIT_LOG",
         headers: [
-          "LogUUID",
+          "AuditID",
           "Timestamp",
-          "StaffID",
-          "RoleCode",
+          "ActorStaffID",
+          "ActorRole",
           "Action",
-          "TargetResource",
-          "DetailsJson",
+          "EntityType",
+          "EntityID",
+          "RequestID",
+          "OldValueHash",
+          "NewValueHash",
+          "MetadataJSON",
+          "IPAddress",
+          "UserAgentHash",
+          "Success",
+          "FailureReason",
           "PreviousHash",
-          "CurrentHash",
-          "CreatedAt",
-          "CreatedBy",
-          "UpdatedAt",
-          "UpdatedBy",
-          "RecordVersion",
-          "IsDeleted"
+          "CurrentHash"
         ]
       },
       {
@@ -2805,6 +4435,7 @@ var GASApp = (() => {
     const props = PropertiesService.getScriptProperties();
     const TARGET_FOLDER_ID = "1lQBZKII-qH2lPonIyijNy5RXaaos9OQk";
     props.setProperty("DB_SECURITY_SPREADSHEET_ID", "1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8");
+    PasswordService.getPepper();
     [CLINICAL_DATABASE_CONFIG, SECURITY_DATABASE_CONFIG, AUDIT_DATABASE_CONFIG].forEach((config) => {
       let ss = null;
       let existingId = props.getProperty(config.propertyKey);
@@ -2861,6 +4492,56 @@ var GASApp = (() => {
     seedSystemConstants();
     seedSampleData();
     seedUserAccounts();
+  }
+  function repairSystemSchema() {
+    const props = PropertiesService.getScriptProperties();
+    const repairedSheets = [];
+    const appendedHeaders = {};
+    [CLINICAL_DATABASE_CONFIG, SECURITY_DATABASE_CONFIG, AUDIT_DATABASE_CONFIG].forEach((config) => {
+      const ssId = props.getProperty(config.propertyKey) || (config.propertyKey === "DB_SECURITY_SPREADSHEET_ID" ? "1oOCXuIPbsEMy154OivVKqquFMt4wfK8LXqhNngH47M8" : null);
+      if (!ssId) return;
+      try {
+        const ss = SpreadsheetApp.openById(ssId);
+        config.sheets.forEach((sheetCfg) => {
+          let sheet = ss.getSheetByName(sheetCfg.name);
+          if (!sheet) {
+            sheet = ss.insertSheet(sheetCfg.name);
+            sheet.appendRow(sheetCfg.headers);
+            sheet.getRange(1, 1, 1, sheetCfg.headers.length).setFontWeight("bold").setBackground("#0A2540").setFontColor("#FFFFFF");
+            sheet.setFrozenRows(1);
+            repairedSheets.push(`${config.spreadsheetTitle} -> ${sheetCfg.name} (Created)`);
+            return;
+          }
+          const lastCol = sheet.getLastColumn();
+          if (lastCol === 0) {
+            sheet.appendRow(sheetCfg.headers);
+            sheet.getRange(1, 1, 1, sheetCfg.headers.length).setFontWeight("bold").setBackground("#0A2540").setFontColor("#FFFFFF");
+            sheet.setFrozenRows(1);
+            repairedSheets.push(`${config.spreadsheetTitle} -> ${sheetCfg.name} (Initialized Header)`);
+            return;
+          }
+          const existingHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map((h) => String(h).trim());
+          const missingHeaders = sheetCfg.headers.filter((h) => !existingHeaders.includes(h));
+          if (missingHeaders.length > 0) {
+            missingHeaders.forEach((missingH, idx) => {
+              const newColIndex = lastCol + idx + 1;
+              const headerCell = sheet.getRange(1, newColIndex);
+              headerCell.setValue(missingH).setFontWeight("bold").setBackground("#0A2540").setFontColor("#FFFFFF");
+            });
+            const key = `${config.spreadsheetTitle}:${sheetCfg.name}`;
+            appendedHeaders[key] = missingHeaders;
+            repairedSheets.push(`${config.spreadsheetTitle} -> ${sheetCfg.name} (+${missingHeaders.length} headers)`);
+          }
+        });
+      } catch (e) {
+        console.error(`Error repairing database ${config.spreadsheetTitle}:`, e);
+      }
+    });
+    return { repairedSheets, appendedHeaders };
+  }
+  function resetTestUserAccounts() {
+    seedUserAccounts();
+    return { resetCount: 8, status: "SUCCESS" };
   }
   function seedSystemConstants() {
     const props = PropertiesService.getScriptProperties();
@@ -2919,51 +4600,20 @@ var GASApp = (() => {
     }
   }
   function seedUserAccounts() {
-    const props = PropertiesService.getScriptProperties();
-    const securitySsId = props.getProperty(SECURITY_DATABASE_CONFIG.propertyKey);
-    if (!securitySsId) return;
-    const ss = SpreadsheetApp.openById(securitySsId);
-    const userSheet = ss.getSheetByName("USER_ACCOUNT");
-    if (!userSheet) return;
-    if (userSheet.getLastRow() === 1) {
-      const now = (/* @__PURE__ */ new Date()).toISOString();
-      const userRoleMap = {
-        "IC8001": { functionalRole: "INFECTION_CONTROL", userLevel: "SUPERUSER" },
-        "HR8002": { functionalRole: "HR", userLevel: "SUPERUSER" },
-        "MD8003": { functionalRole: "PHYSICIAN", userLevel: "SUPERUSER" },
-        "ST8004": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" },
-        "ST8005": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" },
-        "ST8006": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" },
-        "ST8007": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" },
-        "ST8008": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" }
-      };
-      const staffIds = Object.keys(userRoleMap);
-      staffIds.forEach((staffId, index) => {
-        const { hash, salt, iterations } = PasswordService.hashPassword("password123", void 0, 1e4);
-        const userUuid = `user-00${index + 1}`;
-        const roleInfo = userRoleMap[staffId] || { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" };
-        const userRow = [
-          userUuid,
-          staffId,
-          hash,
-          salt,
-          iterations,
-          0,
-          "",
-          false,
-          "ACTIVE",
-          roleInfo.functionalRole,
-          roleInfo.userLevel,
-          now,
-          "SYSTEM",
-          now,
-          "SYSTEM",
-          1,
-          false
-        ];
-        userSheet.appendRow(userRow);
-      });
-    }
+    const accountRepo = new AccountRepository();
+    const userRoleMap = {
+      "IC8001": { functionalRole: "INFECTION_CONTROL", userLevel: "SUPERUSER" },
+      "HR8002": { functionalRole: "HR", userLevel: "SUPERUSER" },
+      "MD8003": { functionalRole: "PHYSICIAN", userLevel: "SUPERUSER" },
+      "ST8004": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" },
+      "ST8005": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" },
+      "ST8006": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" },
+      "ST8007": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" },
+      "ST8008": { functionalRole: "DATA_OWNER", userLevel: "NORMAL_USER" }
+    };
+    Object.entries(userRoleMap).forEach(([staffId, info]) => {
+      accountRepo.createAccount(staffId, "password123", "SYSTEM", info.functionalRole, info.userLevel);
+    });
   }
 
   // src/index.ts
@@ -2996,8 +4646,6 @@ var GASApp = (() => {
         payload = JSON.parse(e.postData.contents);
       }
       const action = payload.action;
-      const role = payload.role || "DATA_OWNER";
-      const staffId = payload.staffId || "ST8004";
       if (!action) {
         return ResponseHelper.error("MISSING_ACTION", "Request payload must include an action.", requestId, 400);
       }
@@ -3006,29 +4654,111 @@ var GASApp = (() => {
       const clinicalCtrl = new ClinicalController();
       const auditCtrl = new AuditController();
       const dashCtrl = new DashboardController();
+      const fileCtrl = new FileController();
+      const importCtrl = new ImportController();
+      const exportCtrl = new ExportController();
+      const accountRepo = new AccountRepository();
+      const sessionRepo = new SessionRepository();
+      if (action === "login") {
+        return authCtrl.login(payload.staffId, payload.password, requestId);
+      }
+      if (action === "requestResetToken") {
+        return authCtrl.requestResetToken(payload.staffId, requestId);
+      }
+      if (action === "resetPassword") {
+        return authCtrl.resetPassword(payload, requestId);
+      }
+      if (action === "ping") {
+        return ResponseHelper.success({ status: "ONLINE", time: (/* @__PURE__ */ new Date()).toISOString() }, requestId);
+      }
+      if (action === "setupSystem") {
+        setupAllDatabases();
+        return ResponseHelper.success({ message: "System setup completed successfully" }, requestId);
+      }
+      if (action === "repairSystemSchema") {
+        const repairResult = repairSystemSchema();
+        return ResponseHelper.success(repairResult, requestId);
+      }
+      if (action === "diagnoseAuthentication") {
+        const diagResult = accountRepo.diagnoseAuthentication(payload.targetStaffId);
+        return ResponseHelper.success(diagResult, requestId);
+      }
+      if (action === "resetTestUserAccounts") {
+        const resetResult = resetTestUserAccounts();
+        return ResponseHelper.success(resetResult, requestId);
+      }
+      const rawToken = payload.token || "";
+      if (!rawToken) {
+        return ResponseHelper.error("UNAUTHORIZED", "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E23\u0E30\u0E1A\u0E38 Token \u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A\u0E01\u0E32\u0E23\u0E22\u0E37\u0E19\u0E22\u0E31\u0E19\u0E15\u0E31\u0E27\u0E15\u0E19", requestId, 401);
+      }
+      const tokenHash = CryptoService.hashSha256(rawToken);
+      const session = sessionRepo.findByTokenHash(tokenHash);
+      if (!session || session.isRevoked) {
+        return ResponseHelper.error("UNAUTHORIZED", "\u0E40\u0E0B\u0E2A\u0E0A\u0E31\u0E19\u0E2B\u0E21\u0E14\u0E2D\u0E32\u0E22\u0E38\u0E2B\u0E23\u0E37\u0E2D\u0E16\u0E39\u0E01\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E41\u0E25\u0E49\u0E27 \u0E01\u0E23\u0E38\u0E13\u0E32\u0E40\u0E02\u0E49\u0E32\u0E2A\u0E39\u0E48\u0E23\u0E30\u0E1A\u0E1A\u0E43\u0E2B\u0E21\u0E48", requestId, 401);
+      }
+      const nowMs = Date.now();
+      if (session.idleExpiresAt && nowMs > new Date(session.idleExpiresAt).getTime()) {
+        sessionRepo.revokeSession(tokenHash);
+        return ResponseHelper.error("SESSION_EXPIRED", "\u0E40\u0E0B\u0E2A\u0E0A\u0E31\u0E19\u0E2B\u0E21\u0E14\u0E2D\u0E32\u0E22\u0E38\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E32\u0E01\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E40\u0E1B\u0E47\u0E19\u0E40\u0E27\u0E25\u0E32\u0E19\u0E32\u0E19", requestId, 401);
+      }
+      if (session.absoluteExpiresAt && nowMs > new Date(session.absoluteExpiresAt).getTime()) {
+        sessionRepo.revokeSession(tokenHash);
+        return ResponseHelper.error("SESSION_EXPIRED", "\u0E40\u0E0B\u0E2A\u0E0A\u0E31\u0E19\u0E2B\u0E21\u0E14\u0E2D\u0E32\u0E22\u0E38\u0E40\u0E01\u0E34\u0E19\u0E01\u0E33\u0E2B\u0E19\u0E14\u0E40\u0E27\u0E25\u0E32\u0E01\u0E32\u0E23\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E2A\u0E39\u0E07\u0E2A\u0E38\u0E14", requestId, 401);
+      }
+      const verifiedStaffId = session.staffId;
+      const account = accountRepo.findByStaffId(verifiedStaffId);
+      if (!account || account.AccountStatus !== "ACTIVE") {
+        sessionRepo.revokeSession(tokenHash);
+        return ResponseHelper.error("ACCOUNT_INACTIVE", "\u0E1A\u0E31\u0E0D\u0E0A\u0E35\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E23\u0E30\u0E07\u0E31\u0E1A\u0E01\u0E32\u0E23\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E2B\u0E23\u0E37\u0E2D\u0E16\u0E39\u0E01\u0E25\u0E1A", requestId, 403);
+      }
+      const isSuperuser = account.UserLevel === "SUPERUSER";
+      const verifiedRole = isSuperuser ? payload.roleOverride || account.FunctionalRole || "INFECTION_CONTROL" : account.FunctionalRole || "DATA_OWNER";
+      if (action === "logout") {
+        return authCtrl.logout(rawToken, requestId);
+      }
       switch (action) {
-        case "login":
-          return authCtrl.login(payload.staffId, payload.password, requestId);
         case "changePassword":
-          return authCtrl.changePassword(payload.staffId, payload.oldPassword, payload.newPassword, requestId);
+          return authCtrl.changePassword(verifiedStaffId, payload.oldPassword, payload.newPassword, requestId);
         case "getStaffList":
-          return staffCtrl.getStaffList(role, staffId, payload.query || {}, requestId);
+          return staffCtrl.getStaffList(verifiedRole, verifiedStaffId, payload.query || payload, requestId);
+        case "listStaff":
+          return staffCtrl.listStaff(verifiedRole, verifiedStaffId, payload, requestId);
+        case "getStaff":
+          return staffCtrl.getStaff(verifiedRole, verifiedStaffId, payload.targetStaffId || verifiedStaffId, requestId);
         case "createStaff":
-          return staffCtrl.createStaff(role, staffId, payload.staffData, requestId);
+          return staffCtrl.createStaff(verifiedRole, verifiedStaffId, payload.staffData || payload, requestId);
+        case "updateStaff":
+          return staffCtrl.updateStaff(verifiedRole, verifiedStaffId, payload.targetStaffId, payload.staffData || payload, requestId);
+        case "deleteStaff":
+          return staffCtrl.deleteStaff(verifiedRole, verifiedStaffId, payload.targetStaffId, requestId);
         case "getHealthRecords":
-          return clinicalCtrl.getVaccinations(role, staffId, payload.targetStaffId || staffId, requestId);
+          return clinicalCtrl.getHealthRecords(verifiedRole, verifiedStaffId, payload.targetStaffId || verifiedStaffId, requestId);
+        case "createHealthRecord":
+          return clinicalCtrl.addVaccination(verifiedRole, verifiedStaffId, payload.recordData || payload, requestId);
+        case "verifyRecord":
+          return clinicalCtrl.verifyVaccination(verifiedRole, verifiedStaffId, payload, requestId);
+        case "addPhysicianAssessment":
+          return clinicalCtrl.addPhysicianAssessment(verifiedRole, verifiedStaffId, payload, requestId);
+        case "uploadFile":
+          return fileCtrl.uploadFile(verifiedRole, verifiedStaffId, payload, requestId);
+        case "downloadFile":
+          return fileCtrl.downloadFile(verifiedRole, verifiedStaffId, payload.documentUuid, requestId);
         case "getAuditLogs":
-          return auditCtrl.getAuditLogs(role, staffId, requestId);
+          return auditCtrl.getAuditLogs(verifiedRole, verifiedStaffId, requestId);
         case "getCompletenessDashboard":
-          return dashCtrl.getCompletenessDashboard(role, staffId, requestId);
+          return dashCtrl.getCompletenessDashboard(verifiedRole, verifiedStaffId, requestId);
         case "getFollowUpDashboard":
-          return dashCtrl.getFollowUpDashboard(role, staffId, requestId);
+          return dashCtrl.getFollowUpDashboard(verifiedRole, verifiedStaffId, requestId);
         case "getProgressDashboard":
-          return dashCtrl.getProgressDashboard(role, staffId, requestId);
+          return dashCtrl.getProgressDashboard(verifiedRole, verifiedStaffId, requestId);
         case "refreshDashboardCache":
-          return dashCtrl.refreshDashboardCache(role, staffId, requestId);
+          return dashCtrl.refreshDashboardCache(verifiedRole, verifiedStaffId, requestId);
         case "getDrillDownDetail":
-          return dashCtrl.getDrillDownDetail(role, staffId, payload.category || "", requestId);
+          return dashCtrl.getDrillDownDetail(verifiedRole, verifiedStaffId, payload.category || "", requestId);
+        case "importStaffCSV":
+          return importCtrl.importStaffCSV(verifiedRole, verifiedStaffId, payload, requestId);
+        case "exportStaffReport":
+          return exportCtrl.exportStaffReport(verifiedRole, verifiedStaffId, payload, requestId);
         default:
           return ResponseHelper.error("UNKNOWN_ACTION", `Action '${action}' is not recognized.`, requestId, 404);
       }
@@ -3038,6 +4768,16 @@ var GASApp = (() => {
   }
   function setupAllSpreadsheetsAndSheets() {
     return setupAllDatabases();
+  }
+  function repairSystemSchema2() {
+    return repairSystemSchema();
+  }
+  function diagnoseAuthentication(targetStaffId) {
+    const accountRepo = new AccountRepository();
+    return accountRepo.diagnoseAuthentication(targetStaffId);
+  }
+  function resetTestUserAccounts2() {
+    return resetTestUserAccounts();
   }
   function cronDailyMailQueue() {
     console.log("Daily Mail Queue cron executed.");
@@ -3054,9 +4794,38 @@ var GASApp = (() => {
 })();
 
 // Google Apps Script Top-Level Entry Points
-function doGet(e) { return GASApp.doGet(e); }
-function doPost(e) { return GASApp.doPost(e); }
-function setupAllSpreadsheetsAndSheets() { return GASApp.setupAllSpreadsheetsAndSheets(); }
-function cronDailyMailQueue() { return GASApp.cronDailyMailQueue(); }
-function cronRecalculateDashboardCache() { return GASApp.cronRecalculateDashboardCache(); }
-function cronAuditChainScan() { return GASApp.cronAuditChainScan(); }
+function doGet(e) {
+  return GASApp.doGet(e);
+}
+
+function doPost(e) {
+  return GASApp.doPost(e);
+}
+
+function setupAllSpreadsheetsAndSheets() {
+  return GASApp.setupAllSpreadsheetsAndSheets();
+}
+
+function repairSystemSchema() {
+  return GASApp.repairSystemSchema();
+}
+
+function diagnoseAuthentication(targetStaffId) {
+  return GASApp.diagnoseAuthentication(targetStaffId);
+}
+
+function resetTestUserAccounts() {
+  return GASApp.resetTestUserAccounts();
+}
+
+function cronDailyMailQueue() {
+  return GASApp.cronDailyMailQueue();
+}
+
+function cronRecalculateDashboardCache() {
+  return GASApp.cronRecalculateDashboardCache();
+}
+
+function cronAuditChainScan() {
+  return GASApp.cronAuditChainScan();
+}

@@ -5,11 +5,14 @@ const path = require('path');
 async function build() {
   console.log('Bundling GAS backend...');
   
+  const srcCodeJs = path.join(__dirname, 'src/Code.js');
+  const rootCodeJs = path.join(__dirname, '../Code.js');
+
   // 1. Bundle TypeScript into a single JavaScript file
   await esbuild.build({
     entryPoints: [path.join(__dirname, 'src/index.ts')],
     bundle: true,
-    outfile: path.join(__dirname, 'src/Code.js'),
+    outfile: srcCodeJs,
     target: 'es2019',
     format: 'iife',
     globalName: 'GASApp'
@@ -30,6 +33,18 @@ function setupAllSpreadsheetsAndSheets() {
   return GASApp.setupAllSpreadsheetsAndSheets();
 }
 
+function repairSystemSchema() {
+  return GASApp.repairSystemSchema();
+}
+
+function diagnoseAuthentication(targetStaffId) {
+  return GASApp.diagnoseAuthentication(targetStaffId);
+}
+
+function resetTestUserAccounts() {
+  return GASApp.resetTestUserAccounts();
+}
+
 function cronDailyMailQueue() {
   return GASApp.cronDailyMailQueue();
 }
@@ -43,8 +58,12 @@ function cronAuditChainScan() {
 }
 `;
 
-  fs.appendFileSync(path.join(__dirname, 'src/Code.js'), globalHandlers);
+  fs.appendFileSync(srcCodeJs, globalHandlers);
   console.log('Successfully generated backend/src/Code.js!');
+
+  // 3. Sync to root Code.js
+  fs.copyFileSync(srcCodeJs, rootCodeJs);
+  console.log('Successfully synced backend/src/Code.js to root Code.js!');
 }
 
 build().catch((err) => {
